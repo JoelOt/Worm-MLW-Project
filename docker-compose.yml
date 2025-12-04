@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  ubuntu1:
+    image: ubuntu:22.04
+    container_name: ubuntu1
+    privileged: true
+    volumes:
+      - ./worm:/home/ubuntu
+    networks:
+      private_net:
+        ipv4_address: 172.28.0.2
+    build:
+      context: ./ubuntu-ssh
+    ports:
+      - "2221:22" # Opcional, solo para acceder desde host
+
+  ubuntu2:
+    image: ubuntu:22.04
+    container_name: ubuntu2
+    privileged: true
+    networks:
+      private_net:
+        ipv4_address: 172.28.0.3
+    build:
+      context: ./ubuntu-ssh
+    ports:
+      - "2222:22"
+
+  ubuntu3:
+    image: ubuntu:22.04
+    container_name: ubuntu3
+    privileged: true
+    networks:
+      private_net:
+        ipv4_address: 172.28.0.4
+    build:
+      context: ./ubuntu-ssh
+    ports:
+      - "2223:22"
+
+  ubuntu4:
+    image: ubuntu:22.04
+    container_name: ubuntu4
+    privileged: true
+    networks:
+      private_net:
+        ipv4_address: 172.28.0.5
+    build:
+      context: ./ubuntu-ssh
+    ports:
+      - "2224:22"
+
+networks:
+  private_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
