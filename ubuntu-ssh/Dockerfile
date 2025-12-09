@@ -3,10 +3,12 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Actualizar repositorios y paquetes necesarios
-RUN apt-get clean && \
-    apt-get update -y && \
-    apt-get install -y --no-install-recommends openssh-server sudo ca-certificates curl python3 python3-pip && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    gcc \
+    make \
+    libssh-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio para SSH de manera segura
 RUN mkdir -p /var/run/sshd
