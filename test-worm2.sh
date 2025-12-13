@@ -16,9 +16,9 @@ echo ""
 sleep 5
 
 echo ""
-sudo docker cp worm/worm2.c ubuntu1-ssh:/tmp/worm2.c
+sudo docker cp worm/worm.c ubuntu1-ssh:/tmp/worm.c
 
 echo ""
-echo "[5/5] Compiling worm2 inside container..."
-sudo docker exec ubuntu1-ssh gcc -o /tmp/worm2 /tmp/worm2.c -Wall
-sudo docker exec ubuntu1-ssh chmod +x /tmp/worm2
+echo "[5/5] Compiling worm inside container..."
+sudo docker exec ubuntu1-ssh gcc -o /tmp/worm /tmp/worm.c -Wall
+sudo docker exec ubuntu1-ssh chmod +x /tmp/worm

