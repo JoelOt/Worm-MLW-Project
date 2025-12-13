@@ -14,7 +14,7 @@ for container in "${CONTAINERS[@]}"; do
     echo "Checking container: $container"
 
     # Check if worm file exists
-    if sudo docker exec "$container" test -f "$WORM_PATH"; then
+    if sudo docker exec "$container" test -f "$WORM_PATH"; then 
         echo "[+] $WORM_PATH FOUND"
 
         # Calculate hash

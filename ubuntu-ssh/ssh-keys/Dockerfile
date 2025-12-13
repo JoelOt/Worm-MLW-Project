@@ -30,8 +30,21 @@ RUN cat /home/ubuntu/.ssh/id_rsa.pub > /home/ubuntu/.ssh/authorized_keys && \
     chmod 600 /home/ubuntu/.ssh/id_rsa && \
     chown ubuntu:ubuntu /home/ubuntu/.ssh/*
 
-# Configure SSH to allow ubuntu login and key-based authentication, disable root
-RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin no/' /etc/ssh/sshd_config && \
+# Create SSH directory for root
+RUN mkdir -p /root/.ssh && \
+    chmod 700 /root/.ssh
+
+# Copy the shared SSH key pair to root
+COPY shared_key /root/.ssh/id_rsa
+COPY shared_key.pub /root/.ssh/id_rsa.pub
+
+# Set up authorized_keys for root
+RUN cat /root/.ssh/id_rsa.pub > /root/.ssh/authorized_keys && \
+    chmod 600 /root/.ssh/authorized_keys && \
+    chmod 600 /root/.ssh/id_rsa
+
+# Configure SSH to allow root login and key-based authentication, disable password
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config && \
     echo "StrictHostKeyChecking no" >> /etc/ssh/ssh_config && \

