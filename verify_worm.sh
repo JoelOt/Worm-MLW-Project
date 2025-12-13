@@ -1,7 +1,6 @@
 #!/bin/bash
 
-#CONTAINERS=("ubuntu2" "ubuntu3" "ubuntu4" "ubuntu5")
-CONTAINERS=("ubuntu1-ssh" "ubuntu2-ssh" "ubuntu3-ssh" "ubuntu4-ssh" "ubuntu5-ssh")
+CONTAINERS=("local_site_1" "local_site_2" "local_site_3")
 
 WORM_PATH="/tmp/worm"
 
@@ -14,7 +13,7 @@ for container in "${CONTAINERS[@]}"; do
     echo "Checking container: $container"
 
     # Check if worm file exists
-    if sudo docker exec "$container" test -f "$WORM_PATH"; then 
+    if sudo docker exec "$container" test -f "$WORM_PATH"; then
         echo "[+] $WORM_PATH FOUND"
 
         # Calculate hash

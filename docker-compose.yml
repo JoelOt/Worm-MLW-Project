@@ -1,95 +1,67 @@
 services:
-  # Atacante inicial - conectado a ubuntu2 y ubuntu3
-  ubuntu1:
-    container_name: ubuntu1
-    privileged: true
+  attacker:
+    build: ./attacker
+    container_name: attacker
     networks:
-      net_1_2:
-        ipv4_address: 172.28.1.2
-      net_1_3:
-        ipv4_address: 172.28.2.2
-    build:
-      context: ./ubuntu-ssh/bash-vuln
-    ports:
-      - "2221:22"
+      - public_internet
+    tty: true
 
-  # Nivel 1 - conectado a ubuntu1 y ubuntu4
-  ubuntu2:
-    container_name: ubuntu2
-    privileged: true
+  c2:
+    build: ./attacker/c2
+    container_name: c2
     networks:
-      net_1_2:
-        ipv4_address: 172.28.1.3
-      net_2_4:
-        ipv4_address: 172.28.3.2
-    build:
-      context: ./ubuntu-ssh/bash-vuln
+      - public_internet
+    tty: true
     ports:
-      - "2222:22"
+      - "8080:8080"
+    volumes:
+      - ./attacker/c2/public:/c2/public
 
-  # Nivel 1 - conectado a ubuntu1 y ubuntu5
-  ubuntu3:
-    container_name: ubuntu3
-    privileged: true
+  pms_server:
+    build: ./pms-server
+    container_name: pms_server
     networks:
-      net_1_3:
-        ipv4_address: 172.28.2.3
-      net_3_5:
-        ipv4_address: 172.28.4.2
-    build:
-      context: ./ubuntu-ssh/bash-vuln
+      - public_internet
+      - private_vpn
     ports:
-      - "2223:22"
+      - "3000:3000"
+    volumes:
+      - ./keys/id_rsa:/home/node/.ssh/id_rsa
+      - ./keys/id_rsa.pub:/home/node/.ssh/id_rsa.pub
 
-  # Nivel 2 - solo conectado a ubuntu2
-  ubuntu4:
-    container_name: ubuntu4
-    privileged: true
+  local_site_1:
+    build: ./pms-client
+    container_name: local_site_1
+    environment:
+      - ROOT_PASSWORD=mysecretpassword
     networks:
-      net_2_4:
-        ipv4_address: 172.28.3.3
-    build:
-      context: ./ubuntu-ssh/bash-vuln
-    ports:
-      - "2224:22"
+      - private_vpn
+    volumes:
+      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
 
-  # Nivel 2 - solo conectado a ubuntu3
-  ubuntu5:
-    container_name: ubuntu5
-    privileged: true
+  local_site_2:
+    build: ./pms-client
+    container_name: local_site_2
+    environment:
+      - ROOT_PASSWORD=password123
     networks:
-      net_3_5:
-        ipv4_address: 172.28.4.3
-    build:
-      context: ./ubuntu-ssh/bash-vuln
-    ports:
-      - "2225:22"
+      - private_vpn
+    volumes:
+      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
 
+  local_site_3:
+    build: ./pms-client
+    container_name: local_site_3
+    environment:
+      - ROOT_PASSWORD=Barcelona2025!
+    networks:
+      - private_vpn
+    volumes:
+      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      
 networks:
-  # Red entre ubuntu1 y ubuntu2
-  net_1_2:
+  public_internet:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.1.0/24
-
-  # Red entre ubuntu1 y ubuntu3
-  net_1_3:
+  private_vpn:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.2.0/24
-
-  # Red entre ubuntu2 y ubuntu4
-  net_2_4:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.3.0/24
-
-  # Red entre ubuntu3 y ubuntu5
-  net_3_5:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.28.4.0/24
+    internal: true
