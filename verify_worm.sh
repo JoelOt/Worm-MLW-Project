@@ -1,7 +1,9 @@
 #!/bin/bash
 
-CONTAINERS=("ubuntu2-ssh" "ubuntu3-ssh" "ubuntu4-ssh" "ubuntu5-ssh")
-WORM_PATH="/tmp/worm2"
+CONTAINERS=("ubuntu2" "ubuntu3" "ubuntu4" "ubuntu5")
+#CONTAINERS=("ubuntu2-ssh" "ubuntu3-ssh" "ubuntu4-ssh" "ubuntu5-ssh")
+
+WORM_PATH="/tmp/worm"
 
 declare -A HASHES
 
