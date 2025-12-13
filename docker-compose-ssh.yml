@@ -1,7 +1,7 @@
 services:
   # Atacante inicial - conectado a ubuntu2 y ubuntu3
   ubuntu1:
-    container_name: ubuntu1
+    container_name: ubuntu1-ssh
     privileged: true
     networks:
       net_1_2:
@@ -9,13 +9,13 @@ services:
       net_1_3:
         ipv4_address: 172.28.2.2
     build:
-      context: ./ubuntu-ssh/bash-vuln
+      context: ./ubuntu-ssh/ssh-keys
     ports:
       - "2221:22"
 
   # Nivel 1 - conectado a ubuntu1 y ubuntu4
   ubuntu2:
-    container_name: ubuntu2
+    container_name: ubuntu2-ssh
     privileged: true
     networks:
       net_1_2:
@@ -23,13 +23,13 @@ services:
       net_2_4:
         ipv4_address: 172.28.3.2
     build:
-      context: ./ubuntu-ssh/bash-vuln
+      context: ./ubuntu-ssh/ssh-keys
     ports:
       - "2222:22"
 
   # Nivel 1 - conectado a ubuntu1 y ubuntu5
   ubuntu3:
-    container_name: ubuntu3
+    container_name: ubuntu3-ssh
     privileged: true
     networks:
       net_1_3:
@@ -37,31 +37,31 @@ services:
       net_3_5:
         ipv4_address: 172.28.4.2
     build:
-      context: ./ubuntu-ssh/bash-vuln
+      context: ./ubuntu-ssh/ssh-keys
     ports:
       - "2223:22"
 
   # Nivel 2 - solo conectado a ubuntu2
   ubuntu4:
-    container_name: ubuntu4
+    container_name: ubuntu4-ssh
     privileged: true
     networks:
       net_2_4:
         ipv4_address: 172.28.3.3
     build:
-      context: ./ubuntu-ssh/bash-vuln
+      context: ./ubuntu-ssh/ssh-keys
     ports:
       - "2224:22"
 
   # Nivel 2 - solo conectado a ubuntu3
   ubuntu5:
-    container_name: ubuntu5
+    container_name: ubuntu5-ssh
     privileged: true
     networks:
       net_3_5:
         ipv4_address: 172.28.4.3
     build:
-      context: ./ubuntu-ssh/bash-vuln
+      context: ./ubuntu-ssh/ssh-keys
     ports:
       - "2225:22"
 
