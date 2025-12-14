@@ -18,10 +18,14 @@ typedef struct {
     int count;
 } cve_result_vector_t;
 
+// Function pointer types for CVE handlers
+typedef cve_scan_result_t (*scan_handler_func_t)(const char* target_ip);
+typedef int (*execution_handler_func_t)(const char* target_ip);
+
 typedef struct {
     int cve_id;
-    char* scan_script_path;
-    char* execution_script_path;
+    scan_handler_func_t scan_func;      // C function pointer for scanning
+    execution_handler_func_t exec_func; // C function pointer for execution
     int priority_order;
 } cve_handler_config_t;
 

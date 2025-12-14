@@ -11,16 +11,15 @@ static int num_rules = 0;
 void init_decision_rules(void) {
     num_rules = 0;
     
-    // Decision rules will be added when handlers are registered
-    // Example structure:
-    // decision_rules[0].cve_id = CVE_2014_6271;
-    // decision_rules[0].priority_order = 1;
-    // decision_rules[0].requires_vulnerable = 1;
-    // decision_rules[0].requires_port_open = 80;
-    // decision_rules[0].min_confidence = 7;
-    // decision_rules[0].max_risk_level = 5;
-    // decision_rules[0].stealth_required = 0;
-    // num_rules = 1;
+    // Decision rule for CVE-2014-6271 (Shellshock)
+    decision_rules[0].cve_id = CVE_2014_6271;
+    decision_rules[0].priority_order = 1;
+    decision_rules[0].requires_vulnerable = 1;      // Must be vulnerable
+    decision_rules[0].requires_port_open = 80;      // Port 80 must be open
+    decision_rules[0].min_confidence = 7;           // Minimum confidence 7/10
+    decision_rules[0].max_risk_level = 5;           // Don't use if risk > 5
+    decision_rules[0].stealth_required = 0;         // Can use in normal mode
+    num_rules = 1;
 }
 
 // Check if CVE is vulnerable
