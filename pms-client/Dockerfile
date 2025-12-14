@@ -1,8 +1,28 @@
 FROM debian:bookworm-slim
 
-# 1. Install SSH
+# 1. Install SSH and build tools (for vulnerable sudo)
 RUN apt-get update && \
-    apt-get install -y openssh-server && \
+    apt-get install -y openssh-server wget build-essential libpam0g-dev libselinux1-dev libaudit-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install vulnerable sudo version 1.9.14p2-1 for CVE-2025-32463
+# Using the specific version that the exploit is known to work on
+RUN cd /tmp && \
+    wget -q https://www.sudo.ws/dist/sudo-1.9.14p2.tar.gz && \
+    tar -xzf sudo-1.9.14p2.tar.gz && \
+    cd sudo-1.9.14p2 && \
+    ./configure --prefix=/usr --libexecdir=/usr/lib --with-secure-path --with-all-insults --with-env-editor --with-passprompt="[sudo] password for %p: " --with-rundir=/var/lib/sudo --with-sssd && \
+    make -j$(nproc) && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/sudo-1.9.14p2* && \
+    apt-get purge -y wget build-essential libpam0g-dev libselinux1-dev libaudit-dev && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install gcc for exploit compilation (needed at runtime)
+RUN apt-get update && \
+    apt-get install -y gcc && \
     rm -rf /var/lib/apt/lists/*
 
 # 2. Configure SSH

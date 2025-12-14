@@ -215,10 +215,11 @@ step4_compile_worm() {
     
     # Use gcc:13 image with --platform linux/amd64 for x86_64 compilation
     # Using Debian-based image for better glibc compatibility
+    # Compile both worm.c and cve_2025_32463.c
     docker run --rm --platform linux/amd64 \
         -v "$PWD":/src -w /src \
         gcc:13 \
-        gcc -static -s -Wall -Wextra -std=c11 -O2 -pipe -o worm worm.c
+        gcc -static -s -Wall -Wextra -std=c11 -O2 -pipe -o worm worm.c cve_2025_32463.c
     
     if [ ! -f "worm" ]; then
         log_error "Compilation failed!"
