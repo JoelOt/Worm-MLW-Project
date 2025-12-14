@@ -63,6 +63,38 @@ docker-compose up -d
 
 You need to compile the C-Worm and package it into the fileless dropper.
 
+**Note**: If you're on an ARM Mac (M1/M2/M3/M4), you must compile inside a Docker container to produce a Linux x86_64 binary. The automated script handles this automatically.
+
+**Automated (Recommended)**:
+```bash
+# The run_scenario.sh script handles compilation automatically
+./run_scenario.sh
+```
+
+**Manual Compilation**:
+
+**Option A: Cross-compile in Docker (Recommended for ARM Macs)**:
+```bash
+cd attacker/worm
+
+# Compile in x86_64 Linux container
+docker run --rm --platform linux/amd64 \
+  -v "$PWD":/src -w /src \
+  gcc:13 \
+  gcc -static -s -Wall -Wextra -std=c11 -O2 -pipe -o worm worm.c
+
+# Verify it's x86_64 Linux
+file worm
+# Should output: ELF 64-bit LSB executable, x86-64, ...
+
+# Build the Fileless Dropper (Generates revoke.crl)
+python3 build-dropper.py
+
+# Move revoke.crl to C2
+mv -f revoke.crl ../c2/public/revoke.crl
+```
+
+**Option B: Native compilation (Linux x86_64 only)**:
 ```bash
 # Enter the attacker
 cd attacker/worm
