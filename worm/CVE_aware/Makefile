@@ -3,14 +3,20 @@ CFLAGS = -Wall -Wextra -std=c11
 TARGET = worm_cve_aware
 BUILD_DIR = build
 
-# Source files
-SOURCES = worm_cve_aware.c \
-          utils.c \
-          state_manager.c \
-          risk_assessment.c \
-          handler_registry.c \
-          decision_engine.c \
-          degradation.c
+# Core source files
+CORE_SOURCES = worm_cve_aware.c \
+               utils.c \
+               state_manager.c \
+               risk_assessment.c \
+               handler_registry.c \
+               decision_engine.c \
+               degradation.c
+
+# CVE handler files (automatically discovered)
+CVE_SOURCES = $(wildcard cve_*.c)
+
+# All source files
+SOURCES = $(CORE_SOURCES) $(CVE_SOURCES)
 
 # Object files (in build directory)
 OBJECTS = $(SOURCES:%.c=$(BUILD_DIR)/%.o)
