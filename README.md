@@ -105,15 +105,19 @@ The worm, now running in the Hub's memory, scans for the internal network.
   * **Credential Access:** It scrapes `/home/<user>/.ssh/id_rsa`.
   * **Propagation:** It uses **SSH Piping** to stream its own binary code (read from `/proc/self/exe`) directly into the disk of the Spoke (`/tmp/worm`).
 
-### Phase 4: Privilege Escalation
+### Phase 4: Privilege Escalation << TODO
 
-  * **Technique:** TODO.
+We land in the Spoke as the low-privileged bdsm user. We cannot yet control the barrier.
+
+  * **Vector:** Outdated version of sudo (v1.8.x).
+  * **Technique:** trigger a Heap Overflow in the sudo argument parsing to spawn a root shell.
+
 
 ### Phase 5: Post-exploitation
 
   * **Credentials Harvesting:** The worm scrapes shadow passwords from the Spoke's environment.
-  * **Exfiltration:** TODO.
-  * **The End:** TODO.
+  * **Exfiltration:** We dump /etc/shadow, chunk it, and send it as DNS traffic.
+  * **The End:** Run an offline dictionary attack to crack the hashes.
 
 -----
 
@@ -121,8 +125,9 @@ The worm, now running in the Hub's memory, scans for the internal network.
 
 ```text
 pms-worm/
-├── attacker/               # 
+├── attacker/                
 |   ├── c2/                 # C2 Server
+|   ├── credentials/        # Exfiltrated shadow files + hash cracker script
 |   ├── iac/                # Exploit for Initial Access (CVE-2025-55182)
 |   └── worm/               # The C Malware Source
 ├── keys/                   # Generated keys

