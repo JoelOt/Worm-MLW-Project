@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11
+CFLAGS = -Wall -Wextra -std=c11 -Wno-unused-function
 TARGET = worm_cve_aware
 BUILD_DIR = build
 
@@ -30,7 +30,7 @@ $(BUILD_DIR):
 
 # Build target
 $(BUILD_DIR)/$(TARGET): $(OBJECTS) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $(OBJECTS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Compile object files
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)

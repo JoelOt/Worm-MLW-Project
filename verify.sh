@@ -6,7 +6,7 @@ WORM_PATH="/tmp/worm"
 
 # Use associative array if available (bash 4+), otherwise use regular array
 if declare -A HASHES_TEST &>/dev/null; then
-    declare -A HASHES
+declare -A HASHES
     USE_ASSOC_ARRAY=1
 else
     USE_ASSOC_ARRAY=0
@@ -28,12 +28,12 @@ for container in "${CONTAINERS[@]}"; do
         HASH=$(docker exec "$container" sha256sum "$WORM_PATH" 2>/dev/null | awk '{print $1}')
         if [ -n "$HASH" ]; then
             if [ $USE_ASSOC_ARRAY -eq 1 ]; then
-                HASHES["$container"]="$HASH"
+        HASHES["$container"]="$HASH"
             else
                 HASHES+=("$HASH")
                 HASH_KEYS+=("$container")
             fi
-            echo "[+] SHA256: $HASH"
+        echo "[+] SHA256: $HASH"
         fi
     else
         echo "[-] $WORM_PATH NOT FOUND"
@@ -77,8 +77,8 @@ if [ $USE_ASSOC_ARRAY -eq 1 ]; then
     UNIQUE_HASHES=$(printf "%s\n" "${HASHES[@]}" | sort -u | wc -l)
     TOTAL_HASHES=${#HASHES[@]}
 else
-    UNIQUE_HASHES=$(printf "%s\n" "${HASHES[@]}" | sort -u | wc -l)
-    TOTAL_HASHES=${#HASHES[@]}
+UNIQUE_HASHES=$(printf "%s\n" "${HASHES[@]}" | sort -u | wc -l)
+TOTAL_HASHES=${#HASHES[@]}
 fi
 
 if [ "$UNIQUE_HASHES" -eq "$TOTAL_HASHES" ] && [ "$TOTAL_HASHES" -gt 0 ]; then
@@ -86,8 +86,8 @@ if [ "$UNIQUE_HASHES" -eq "$TOTAL_HASHES" ] && [ "$TOTAL_HASHES" -gt 0 ]; then
 else
     if [ "$TOTAL_HASHES" -eq 0 ]; then
         echo "[-] WARNING: No worm instances found to verify"
-    else
-        echo "[-] WARNING: Some instances share the same hash"
+else
+    echo "[-] WARNING: Some instances share the same hash"
     fi
 fi
 
