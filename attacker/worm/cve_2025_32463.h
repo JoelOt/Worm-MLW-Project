@@ -22,4 +22,3 @@ int cve_2025_32463_scan(void);
 int cve_2025_32463_execute(void);
 
 #endif // CVE_2025_32463_H
-

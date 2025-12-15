@@ -1,9 +1,20 @@
+# Version mínima de Debian
 FROM debian:bookworm-slim
 
 # 1. Install SSH and build tools (for vulnerable sudo)
-RUN apt-get update && \
-    apt-get install -y openssh-server wget build-essential libpam0g-dev libselinux1-dev libaudit-dev && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    openssh-server \
+    wget \
+    curl \
+    net-tools \
+    iputils-ping \
+    build-essential \
+    libpam0g-dev \
+    libselinux1-dev \
+    libaudit-dev \
+    nano \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install vulnerable sudo version 1.9.14p2-1 for CVE-2025-32463
 # Using the specific version that the exploit is known to work on

