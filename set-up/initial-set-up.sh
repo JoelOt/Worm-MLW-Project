@@ -158,7 +158,7 @@ step4_verify() {
 # Main
 # ------------------------------------------------------------
 main() {
-    log_step "Worm Propagation Scenario"
+    log_step "Setting up the scenario"
     cleanup_docker
     step1_generate_keys
     step2_build_docker

