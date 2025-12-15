@@ -53,7 +53,7 @@ ATTACKER_DIR="$BASE_DIR/attacker"
 WORM_DIR="$ATTACKER_DIR/worm"
 IAC_DIR="$ATTACKER_DIR/iac"
 C2_DIR="$ATTACKER_DIR/c2"
-KEYS_DIR="$BASE_DIR/../keys"
+KEYS_DIR="$BASE_DIR/keys"
 
 # ------------------------------------------------------------
 # Argument parsing

