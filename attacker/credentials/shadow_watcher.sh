@@ -119,10 +119,17 @@ while true; do
             if command -v stdbuf >/dev/null 2>&1; then
                 stdbuf -oL -eL bash "$HASHRACKER_SCRIPT" "$shadow_file" >> "$log_file" 2>&1 &
             else
-                # Fallback: use script command to ensure output is flushed
-                script -q -c "bash '$HASHRACKER_SCRIPT' '$shadow_file'" "$log_file" >> /dev/null 2>&1 &
+                # Fallback: just run directly with output redirection
+                bash "$HASHRACKER_SCRIPT" "$shadow_file" >> "$log_file" 2>&1 &
             fi
             CRACKER_PID=$!
+            
+            # Verify the process started
+            sleep 1
+            if ! kill -0 $CRACKER_PID 2>/dev/null; then
+                log_warn "Hash cracker process died immediately (PID: $CRACKER_PID)"
+                log_warn "Check log file for errors: $log_file"
+            fi
             
             log_info "Hash cracker PID: $CRACKER_PID, log file: $log_file"
             
