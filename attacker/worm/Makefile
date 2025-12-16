@@ -1,15 +1,19 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11
+# Mantienes C11 y tienes todas las funciones POSIX disponibles.
+CFLAGS = -Wall -Wextra -std=gnu11
 TARGET = worm
-SOURCE = worm.c
+SOURCES = worm.c cve_2025_32463.c
+OBJECTS = $(SOURCES:.c=.o)
 
 all: $(TARGET)
 
-$(TARGET): $(SOURCE)
-	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCE)
+$(TARGET): $(OBJECTS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJECTS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(OBJECTS)
 
 .PHONY: all clean
-

