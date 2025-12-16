@@ -98,10 +98,10 @@ fi
 echo "[*] Cracking passwords (this may take a while)..."
 if [ -n "$WORDLIST_OPTION" ]; then
     # Use wordlist + rules for better results
-    john --format=crypt $WORDLIST_OPTION --rules "$SHADOW_FILE" &
+    john --format=crypt $WORDLIST_OPTION --rules "$SHADOW_FILE" 2>&1 &
 else
     # Use incremental mode (slower but thorough)
-    john --format=crypt --incremental "$SHADOW_FILE" &
+    john --format=crypt --incremental "$SHADOW_FILE" 2>&1 &
 fi
 
 JOHN_PID=$!
@@ -125,7 +125,9 @@ show_results() {
     echo "===================="
     john --show --format=crypt "$SHADOW_FILE"
     
-    CRACKED_COUNT=$(john --show --format=crypt "$SHADOW_FILE" 2>/dev/null | grep -c '^[^:]*:' || echo 0)
+    CRACKED_COUNT=$(john --show --format=crypt "$SHADOW_FILE" 2>/dev/null | grep -c '^[^:]*:' 2>/dev/null || echo 0)
+    # Ensure CRACKED_COUNT is numeric
+    CRACKED_COUNT=$(echo "$CRACKED_COUNT" | grep -E '^[0-9]+$' || echo 0)
     if [ "$CRACKED_COUNT" -gt 0 ]; then
         echo ""
         echo "[+] Successfully cracked $CRACKED_COUNT password(s)!"

@@ -9,9 +9,23 @@
 SHADOW_DIR="/attacker/credentials/new"
 HASHRACKER_SCRIPT="/attacker/credentials/hashcracker.sh"
 PROCESSED_FILE="/attacker/credentials/.processed_shadows"
+WATCHER_LOG="/tmp/watcher.log"
+
+# Ensure log file exists and is writable
+touch "$WATCHER_LOG" 2>/dev/null || {
+    echo "ERROR: Cannot create watcher log file: $WATCHER_LOG" >&2
+    WATCHER_LOG="/dev/stdout"  # Fallback to stdout if /tmp is not writable
+}
 
 # Wait a bit for volume mounts to be ready
 sleep 2
+
+# Function to log to both stdout and log file
+log_with_file() {
+    local message="$1"
+    echo "$message"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" >> "$WATCHER_LOG"
+}
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -20,15 +34,21 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 log_info() {
-    echo -e "${BLUE}[*]${NC} $1"
+    local msg="${BLUE}[*]${NC} $1"
+    echo -e "$msg"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $1" >> "$WATCHER_LOG"
 }
 
 log_success() {
-    echo -e "${GREEN}[+]${NC} $1"
+    local msg="${GREEN}[+]${NC} $1"
+    echo -e "$msg"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $1" >> "$WATCHER_LOG"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[!]${NC} $1"
+    local msg="${YELLOW}[!]${NC} $1"
+    echo -e "$msg"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] $1" >> "$WATCHER_LOG"
 }
 
 # Create processed file if it doesn't exist
@@ -89,12 +109,54 @@ while true; do
             # Run hashcracker in background so we can continue monitoring
             # Store output in a log file
             log_file="${shadow_file}.crack.log"
-            # Use nohup to ensure process continues even if terminal disconnects
-            nohup "$HASHRACKER_SCRIPT" "$shadow_file" > "$log_file" 2>&1 &
+            # Ensure log file exists and is empty initially
+            > "$log_file"
+            
+            log_success "Hash cracking started for: $filename (will log to: $log_file)"
+            
+            # Run hashcracker script and redirect all output to log file
+            # Use stdbuf if available for unbuffered output
+            if command -v stdbuf >/dev/null 2>&1; then
+                stdbuf -oL -eL bash "$HASHRACKER_SCRIPT" "$shadow_file" >> "$log_file" 2>&1 &
+            else
+                # Fallback: use script command to ensure output is flushed
+                script -q -c "bash '$HASHRACKER_SCRIPT' '$shadow_file'" "$log_file" >> /dev/null 2>&1 &
+            fi
             CRACKER_PID=$!
             
-            log_success "Hash cracking started (PID: $CRACKER_PID, log: $log_file)"
-            log_info "Monitor progress with: tail -f $log_file"
+            log_info "Hash cracker PID: $CRACKER_PID, log file: $log_file"
+            
+            # Start a background process to monitor the crack log and forward updates to watcher log
+            (
+                sleep 2  # Give cracker a moment to start writing
+                LAST_SIZE=0
+                while kill -0 $CRACKER_PID 2>/dev/null; do
+                    if [ -f "$log_file" ]; then
+                        CURRENT_SIZE=$(stat -c %s "$log_file" 2>/dev/null || stat -f %z "$log_file" 2>/dev/null || echo 0)
+                        if [ "$CURRENT_SIZE" -gt "$LAST_SIZE" ]; then
+                            # New content added - show it in watcher log
+                            NEW_LINES=$(tail -c +$((LAST_SIZE + 1)) "$log_file" 2>/dev/null)
+                            if [ -n "$NEW_LINES" ]; then
+                                echo "$NEW_LINES" | while IFS= read -r line; do
+                                    echo "$(date '+%Y-%m-%d %H:%M:%S') [CRACK:$filename] $line" >> "$WATCHER_LOG"
+                                done
+                            fi
+                            LAST_SIZE=$CURRENT_SIZE
+                        fi
+                    fi
+                    sleep 3  # Check every 3 seconds
+                done
+                # Final update when cracker finishes
+                if [ -f "$log_file" ]; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') [CRACK:$filename] Process finished, final output:" >> "$WATCHER_LOG"
+                    tail -20 "$log_file" 2>/dev/null | while IFS= read -r line; do
+                        echo "$(date '+%Y-%m-%d %H:%M:%S') [CRACK:$filename] $line" >> "$WATCHER_LOG"
+                    done
+                fi
+                echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] Hash cracking completed for: $filename" >> "$WATCHER_LOG"
+            ) &
+            
+            log_info "Monitor progress: tail -f $log_file (updates also shown in watcher log)"
             
             # Mark as processed
             processed["$filename"]=1
