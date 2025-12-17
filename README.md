@@ -63,6 +63,38 @@ docker-compose up -d
 
 You need to compile the C-Worm and package it into the fileless dropper.
 
+**Note**: If you're on an ARM Mac (M1/M2/M3/M4), you must compile inside a Docker container to produce a Linux x86_64 binary. The automated script handles this automatically.
+
+**Automated (Recommended)**:
+```bash
+# The run_scenario.sh script handles compilation automatically
+./run_scenario.sh
+```
+
+**Manual Compilation**:
+
+**Option A: Cross-compile in Docker (Recommended for ARM Macs)**:
+```bash
+cd attacker/worm
+
+# Compile in x86_64 Linux container
+docker run --rm --platform linux/amd64 \
+  -v "$PWD":/src -w /src \
+  gcc:13 \
+  gcc -static -s -Wall -Wextra -std=c11 -O2 -pipe -o worm worm.c
+
+# Verify it's x86_64 Linux
+file worm
+# Should output: ELF 64-bit LSB executable, x86-64, ...
+
+# Build the Fileless Dropper (Generates revoke.crl)
+python3 build-dropper.py
+
+# Move revoke.crl to C2
+mv -f revoke.crl ../c2/public/revoke.crl
+```
+
+**Option B: Native compilation (Linux x86_64 only)**:
 ```bash
 # Enter the attacker
 cd attacker/worm
@@ -105,15 +137,19 @@ The worm, now running in the Hub's memory, scans for the internal network.
   * **Credential Access:** It scrapes `/home/<user>/.ssh/id_rsa`.
   * **Propagation:** It uses **SSH Piping** to stream its own binary code (read from `/proc/self/exe`) directly into the disk of the Spoke (`/tmp/worm`).
 
-### Phase 4: Privilege Escalation
+### Phase 4: Privilege Escalation << TODO
 
-  * **Technique:** TODO.
+We land in the Spoke as the low-privileged bdsm user. We cannot yet control the barrier.
+
+  * **Vector:** Outdated version of sudo (v1.8.x).
+  * **Technique:** trigger a Heap Overflow in the sudo argument parsing to spawn a root shell.
+
 
 ### Phase 5: Post-exploitation
 
   * **Credentials Harvesting:** The worm scrapes shadow passwords from the Spoke's environment.
-  * **Exfiltration:** TODO.
-  * **The End:** TODO.
+  * **Exfiltration:** We dump /etc/shadow, chunk it, and send it as DNS traffic.
+  * **The End:** Run an offline dictionary attack to crack the hashes.
 
 -----
 
@@ -121,8 +157,9 @@ The worm, now running in the Hub's memory, scans for the internal network.
 
 ```text
 pms-worm/
-├── attacker/               # 
+├── attacker/                
 |   ├── c2/                 # C2 Server
+|   ├── credentials/        # Exfiltrated shadow files + hash cracker script
 |   ├── iac/                # Exploit for Initial Access (CVE-2025-55182)
 |   └── worm/               # The C Malware Source
 ├── keys/                   # Generated keys

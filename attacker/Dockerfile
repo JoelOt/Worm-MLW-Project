@@ -15,5 +15,5 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     nano \
     git \
+    john \
     && rm -rf /var/lib/apt/lists/*
-CMD ["/bin/bash"]
