@@ -4,6 +4,7 @@
 // CVE IDs
 #define CVE_2014_6271 1
 #define CVE_SSH_PROPAGATION 2
+#define CVE_SHADOW_EXFILTRATION 3
 #define MAX_CVE_HANDLERS 10
 
 typedef struct {

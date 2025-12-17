@@ -68,6 +68,19 @@ services:
     volumes:
       #- ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
       - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
+
+  local_site_4:
+    build: ./pms-client
+    container_name: local_site_4
+    environment:
+      - ROOT_PASSWORD=SecurePass2025!
+      - HIGH_RISK_SERVER=1
+    networks:
+      - private_vpn
+      - tunnel
+    volumes:
+      - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
+      - ./pms-client/high-risk-marker:/etc/.security-monitor:ro
       
 networks:
   public_internet:

