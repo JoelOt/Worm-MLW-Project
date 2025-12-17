@@ -67,14 +67,10 @@ static int send_http_request(const char* ip, int port, const char* path,
 }
 
 // CVE-2014-6271 (Shellshock) Scan Handler
-// Scans a specific target IP for Shellshock vulnerability
-// If target_ip is NULL, returns not vulnerable (handler requires a target)
 cve_scan_result_t cve_2014_6271_scan(const char* target_ip) {
     cve_scan_result_t result = {0};
     result.cve_id = CVE_2014_6271;
     
-    // If no target IP provided, return not vulnerable
-    // This handler requires a specific target to scan
     if (!target_ip) {
         result.is_vulnerable = 0;
         result.confidence = 0;
