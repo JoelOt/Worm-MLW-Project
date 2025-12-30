@@ -5,17 +5,21 @@ services:
     networks:
       - public_internet
     tty: true
+    volumes:
+      - ./attacker/credentials:/attacker/credentials
 
   c2:
     build: ./attacker/c2
     container_name: c2
     networks:
       - public_internet
+      - tunnel
     tty: true
     ports:
       - "8080:8080"
     volumes:
       - ./attacker/c2/public:/c2/public
+      - ./attacker/credentials:/c2/credentials
 
   pms_server:
     build: ./pms-server
@@ -36,8 +40,10 @@ services:
       - ROOT_PASSWORD=mysecretpassword
     networks:
       - private_vpn
+      - tunnel
     volumes:
-      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      #- ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
 
   local_site_2:
     build: ./pms-client
@@ -46,8 +52,10 @@ services:
       - ROOT_PASSWORD=password123
     networks:
       - private_vpn
+      - tunnel
     volumes:
-      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      #- ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
 
   local_site_3:
     build: ./pms-client
@@ -56,8 +64,23 @@ services:
       - ROOT_PASSWORD=Barcelona2025!
     networks:
       - private_vpn
+      - tunnel
     volumes:
-      - ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      #- ./keys/id_rsa.pub:/tmp/ssh_key.pub:ro
+      - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
+
+  local_site_4:
+    build: ./pms-client
+    container_name: local_site_4
+    environment:
+      - ROOT_PASSWORD=SecurePass2025!
+      - HIGH_RISK_SERVER=1
+    networks:
+      - private_vpn
+      - tunnel
+    volumes:
+      - ./keys/id_rsa.pub:/root/.ssh/authorized_keys
+      - ./pms-client/high-risk-marker:/etc/.security-monitor:ro
       
 networks:
   public_internet:
@@ -65,3 +88,5 @@ networks:
   private_vpn:
     driver: bridge
     internal: true
+  tunnel:
+    driver: bridge

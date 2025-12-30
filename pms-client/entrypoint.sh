@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# 1. Handle SSH Key Injection
+# 1. Handle SSH Key Injection (only for BDSM user)
 # If the temporary mount file exists...
 if [ -f "/tmp/ssh_key.pub" ]; then
     echo "Loading SSH key from mount..."
